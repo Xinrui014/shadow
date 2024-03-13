@@ -119,7 +119,7 @@ class LRHRDataset(Dataset):
         if self.need_LR:
             [img_LR, img_SR, img_HR, img_mask] = Util.transform_augment(
                 [img_LR, img_SR, img_HR, img_mask], split=self.split, min_max=(-1, 1))
-            return {'LR': img_LR, 'HR': img_HR, 'SR': img_SR, 'mask': img_mask, 'Index': index}
+            return {'LR': img_LR, 'HR': img_HR, 'SR': img_SR, 'mask': img_mask, 'Index': index, 'LR_path': self.sr_path[index]}
         else:
             [img_SR, img_HR, img_mask] = Util.transform_augment(
                 [img_SR, img_HR, img_mask], split=self.split, min_max=(-1, 1))
