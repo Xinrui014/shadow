@@ -12,6 +12,7 @@ class LRHRDataset(Dataset):
         self.datatype = datatype
         self.l_res = l_resolution
         self.r_res = r_resolution
+
         self.data_len = data_len
         self.need_LR = need_LR
         self.split = split

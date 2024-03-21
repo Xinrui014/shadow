@@ -1,8 +1,8 @@
 {
-    "name": "srd_test1",
+    "name": "sam_shadow",
     "phase": "train", // train or val
     "gpu_ids": [
-       2
+       3
     ],
     "path": { //set the path
         "log": "logs",
@@ -10,25 +10,25 @@
         "results": "results",
         "checkpoint": "checkpoint",
 //        "resume_state": null
-        "resume_state": "/data/lanqing/experiments/shadowSRD6_220926_152600/checkpoint/I1026000_E6108" //pretrain model or training state
+        "resume_state": "/home/xinrui/projects/ShadowDiffusion/experiments/official_test/checkpoint/I2130000_E12080" //pretrain model or training state
     },
     "datasets": {
         "train": {
-            "name": "FFHQ",
+            "name": "ISTD_Dataset_train",
             "mode": "HR", // whether need LR img
-            "dataroot": "../../data/SRD_dataset/train",
+            "dataroot": "/home/xinrui/projects/SAM-Adapter/data/ISTD_Dataset/train", // because dataloader is in data/LRHR_dataset.py
             "datatype": "img", //lmdb or img, path of img files
             "l_resolution": "low", // low resolution need to super_resolution
             "r_resolution": "high", // high resolution
-            "batch_size": 12,
+            "batch_size": 1, // 12
             "num_workers": 8,
             "use_shuffle": true,
             "data_len": -1 // -1 represents all data used in train
         },
         "val": {
-            "name": "CelebaHQ",
+            "name": "ISTD_Dataset_val",
             "mode": "LRHR",
-            "dataroot": "../../data/SRD_dataset/test",
+            "dataroot": "/home/projects/SAM-Adapter/data/ISTD_Dataset/test",
             "datatype": "img", //lmdb or img, path of img files
             "l_resolution": "test_low",
             "r_resolution": "test_high",

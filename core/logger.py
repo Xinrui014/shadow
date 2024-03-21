@@ -22,7 +22,7 @@ def parse(args):
     phase = args.phase
     opt_path = args.config
     gpu_ids = args.gpu_ids
-    enable_wandb = args.enable_wandb
+    # enable_wandb = args.enable_wandb
     # remove comments starting with '//'
     json_str = ''
     with open(opt_path, 'r') as f:
@@ -89,7 +89,7 @@ def parse(args):
         opt['log_infer'] = log_infer
     except:
         pass
-    opt['enable_wandb'] = enable_wandb
+    # opt['enable_wandb'] = enable_wandb
     
     return opt
 
