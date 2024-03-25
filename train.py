@@ -68,16 +68,15 @@ if __name__ == "__main__":
     diffusion.set_new_noise_schedule(
         opt['model']['beta_schedule'][opt['phase']], schedule_phase=opt['phase'])
 
-
     # Init and load SAM_adapter
 
     # SAM-adapter epoch and min_learning rate
     max_epoch = 200
-    image_path = "/home/xinrui/projects/SAM-Adapter/data/ISTD_Dataset/train/train_A"
-    mask_path = "/home/xinrui/projects/SAM-Adapter/data/ISTD_Dataset/train/train_B"
-    datasets = TrainDataset(image_folder=image_path, mask_folder=mask_path)
-    loader = DataLoader(datasets, batch_size=1)
-    num_cuda_devices= torch.cuda.device_count()
+    # image_path = "/home/xinrui/projects/SAM-Adapter/data/ISTD_Dataset/train/train_A"
+    # mask_path = "/home/xinrui/projects/SAM-Adapter/data/ISTD_Dataset/train/train_B"
+    # datasets = TrainDataset(image_folder=image_path, mask_folder=mask_path)
+    # loader = DataLoader(datasets, batch_size=1)
+    # num_cuda_devices= torch.cuda.device_count()
 
     device = torch.device('cuda')
     adp_model = SAM(inp_size=1024, loss='iou').to(device)
@@ -151,12 +150,14 @@ if __name__ == "__main__":
                         b, c, h, w = diffusion.data['HR'].shape
                         l_pix = l_pix.sum() / int(b * c * h * w)
                         l_pix = l_pix/gradient_accumulation_steps
+
+                        wandb.log({'step_loss': l_pix.item()})
+
                         # Perform a single backward pass
                         l_pix.backward()
                         if (index + 1) % gradient_accumulation_steps == 0:
                             current_step += 1
                             optimizer.step()
-                            lr_scheduler.step()
                             optimizer.zero_grad()
                             diffusion.ema_helper.update(diffusion.netG)
                         # lr_scheduler.step()
@@ -165,7 +166,12 @@ if __name__ == "__main__":
                         # for i, param_group in enumerate(optimizer.param_groups):
                         #     current_lr = param_group['lr']
                         #     print(f"Current learning rate for parameter group {i}: {current_lr}")
+                lr_scheduler.step()
+                # print the learning rate
+                for param_group in optimizer.param_groups:
+                    # param_group 0 is adp_model, param_group 1 is diffusion
 
+                    logger.info(f"Current learning rate for parameter group {param_group}: {param_group['lr']}")
                 # Set log
                 wandb.log({'loss': l_pix.item()})
                 diffusion.log_dict['l_pix'] = l_pix.item()
@@ -180,7 +186,7 @@ if __name__ == "__main__":
                         message += '{:s}: {:.4e} '.format(k, v)
                     logger.info(message)
 
-                if epoch % 50 == 0:
+                if epoch % 20 == 0:
                     logger.info('Saving models and training states.')
                     diffusion.save_network(current_epoch, current_step)
                     # save SAM_adapter
