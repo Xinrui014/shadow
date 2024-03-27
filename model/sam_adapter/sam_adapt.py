@@ -189,7 +189,7 @@ class SAM(nn.Module):
         # Upscale the masks to the original image resolution
         masks = self.postprocess_masks(low_res_masks, self.inp_size, self.inp_size)
         self.pred_mask = masks
-        return masks
+        return low_res_masks
 
     def infer(self, input):
         bs = 1

@@ -65,12 +65,12 @@ if __name__ == "__main__":
 
     device = torch.device('cuda')
     adp_model = SAM(inp_size=1024, loss='iou').to(device)
-    sam_checkpoint = torch.load("./experiments/sam_shadow_240325_072440/checkpoint/adp_model_epoch_50.pth")
+    sam_checkpoint = torch.load("./experiments/sam_shadow_240325_135509/checkpoint/adp_model_epoch_50.pth")
     adp_model.load_state_dict(sam_checkpoint['model_state_dict'], strict=False)
     for name, para in adp_model.named_parameters():
         if "image_encoder" in name and "prompt_generator" not in name:
             para.requires_grad_(False)
-    # adp_model.to(device)
+    adp_model.to(device)
     adp_model.eval()
 
     logger.info('Begin Model Evaluation.')
@@ -86,11 +86,12 @@ if __name__ == "__main__":
 
         inp = val_data['SR']
         inp = F.interpolate(inp, size=(1024, 1024), mode='bilinear', align_corners=False)
+        inp = inp.to(device)
         with torch.autocast(device_type="cuda"):
-            inp.to(device)
             pred = torch.sigmoid(adp_model.infer(inp))
-            # is 256 or 160 ?
+            # is 256
             val_data['mask'] = F.interpolate(pred, size=(256, 256), mode='bilinear', align_corners=False)
+
             diffusion.feed_data(val_data)
             diffusion.test(continous=True)
             visuals = diffusion.get_current_visuals()
@@ -98,6 +99,7 @@ if __name__ == "__main__":
         hr_img = Metrics.tensor2img(visuals['HR'])  # uint8
         lr_img = Metrics.tensor2img(visuals['LR'])  # uint8
         fake_img = Metrics.tensor2img(visuals['INF'])  # uint8
+        mask_img = Metrics.tensor2img(pred.detach().float().cpu())
 
         sr_img_mode = 'grid'
         if sr_img_mode == 'single':
@@ -123,6 +125,9 @@ if __name__ == "__main__":
             lr_img, '{}/{}_{}_lr.png'.format(result_path, filename, idx))
         Metrics.save_img(
             fake_img, '{}/{}_{}_inf.png'.format(result_path, filename, idx))
+        Metrics.save_img(
+            mask_img, '{}/{}_{}_mask.png'.format(result_path, filename, idx)
+        )
 
         # generation
         res = Metrics.tensor2img(visuals['SR'][-1])

@@ -15,6 +15,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import wandb
+import torch.nn as nn
 
 
 if __name__ == "__main__":
@@ -79,13 +80,26 @@ if __name__ == "__main__":
     # num_cuda_devices= torch.cuda.device_count()
 
     device = torch.device('cuda')
+    # Check the number of available GPUs
+    num_gpus = torch.cuda.device_count()
+
     adp_model = SAM(inp_size=1024, loss='iou').to(device)
     sam_checkpoint = torch.load("./experiments/official_test/SAM_adapter_ckpt/model_epoch_best.pth")
     adp_model.load_state_dict(sam_checkpoint, strict=False)
-    for name, para in adp_model.named_parameters():
-        if "image_encoder" in name and "prompt_generator" not in name:
-            para.requires_grad_(False)
-    # adp_model.to(device)
+
+    # the prompt generator is not trained
+    # for name, para in adp_model.named_parameters():
+    #     if "image_encoder" in name and "prompt_generator" not in name:
+    #         para.requires_grad_(False)
+
+    # freeze all the parameter of adp_model
+    for param in adp_model.parameters():
+        param.requires_grad = False
+
+    # Use DataParallel if multiple GPUs are available
+    if num_gpus > 1:
+        adp_model = nn.DataParallel(adp_model)
+        adp_model = adp_model.module
     adp_model.train()
 
     # Initialize the AdamW optimizer for adp_model
@@ -96,8 +110,8 @@ if __name__ == "__main__":
     adp_params = [{'params': adp_model.parameters(), 'lr': 0.0002}]
     diffusion_params = [{'params': diffusion.netG.parameters(), 'lr': 3e-05}]
     params = adp_params + diffusion_params
-    optimizer = optim.AdamW(params)
-    lr_scheduler = CosineAnnealingLR(optimizer, max_epoch, eta_min=1e-7)
+    optimizer = optim.Adam(params)
+    # lr_scheduler = CosineAnnealingLR(optimizer, max_epoch, eta_min=1e-7)
 
     # print name paramter in diffusion and the sam model
     # for name, para in adp_model.named_parameters():
@@ -110,7 +124,7 @@ if __name__ == "__main__":
     #         print(name, para.requires_grad, para.is_leaf)
 
     # Set number of iterations to accumulate gradients
-    gradient_accumulation_steps = 3
+    gradient_accumulation_steps = 1
 
     # training
     if opt['phase'] == 'train':
@@ -142,6 +156,8 @@ if __name__ == "__main__":
 
                     with torch.autocast(device_type="cuda"):
                         adp_model.set_input(inp, gt)
+                        # use the low_res output 256x256 and then resize to 160x160
+
                         pred_mask = adp_model.forward()
                         train_data['mask'] = F.interpolate(pred_mask, size=(160,160), mode='bilinear', align_corners=False)
                         diffusion.feed_data(train_data)
@@ -155,6 +171,11 @@ if __name__ == "__main__":
 
                         # Perform a single backward pass
                         l_pix.backward()
+
+                        # print first layer gradient
+                        # first_layer_grad = list(diffusion.netG.parameters())[0].grad
+                        # logger.info("the first parameter's gradient is:", first_layer_grad[0][0])
+
                         if (index + 1) % gradient_accumulation_steps == 0:
                             current_step += 1
                             optimizer.step()
@@ -166,15 +187,16 @@ if __name__ == "__main__":
                         # for i, param_group in enumerate(optimizer.param_groups):
                         #     current_lr = param_group['lr']
                         #     print(f"Current learning rate for parameter group {i}: {current_lr}")
-                lr_scheduler.step()
+                # lr_scheduler.step()
                 # print the learning rate
-                for param_group in optimizer.param_groups:
-                    # param_group 0 is adp_model, param_group 1 is diffusion
-
-                    logger.info(f"Current learning rate for parameter group {param_group}: {param_group['lr']}")
+                # current_lr_adp = lr_scheduler.get_last_lr()[0]
+                # current_lr_diffusion = lr_scheduler.get_last_lr()[1]
+                # print(
+                #     f"Epoch [{epoch + 1}/{max_epoch}], Learning Rate (ADP): {current_lr_adp:.8f}, Learning Rate (Diffusion): {current_lr_diffusion:.8f}")
                 # Set log
-                wandb.log({'loss': l_pix.item()})
+                wandb.log({'loss': l_pix.item(), 'epoch': epoch})
                 diffusion.log_dict['l_pix'] = l_pix.item()
+
 
 
                 # log
@@ -196,6 +218,7 @@ if __name__ == "__main__":
                         'optimizer_state_dict': optimizer.state_dict(),
                     }
                     torch.save(sam_adapter_ckpt, os.path.join(opt['path']['checkpoint'], f"adp_model_epoch_{epoch}.pth"))
+
 
                 pbar.update(1)
             logger.info('End of training.')

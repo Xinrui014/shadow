@@ -10,7 +10,7 @@
         "results": "results",
         "checkpoint": "checkpoint",
 //        "resume_state": null
-        "resume_state": "/home/xinrui/projects/ShadowDiffusion/experiments/official_test/checkpoint/I2130000_E12080" //pretrain model or training state
+        "resume_state": "/home/xinrui/projects/ShadowDiffusion/experiments/official_test/checkpoint/ISTD_dataset/I260000_E3096" //pretrain model or training state
     },
     "datasets": {
         "train": {
@@ -20,7 +20,7 @@
             "datatype": "img", //lmdb or img, path of img files
             "l_resolution": "low", // low resolution need to super_resolution
             "r_resolution": "high", // high resolution
-            "batch_size": 1, // 12
+            "batch_size": 12, // 12
             "num_workers": 8,
             "use_shuffle": true,
             "data_len": -1 // -1 represents all data used in train
@@ -28,7 +28,7 @@
         "val": {
             "name": "ISTD_Dataset_val",
             "mode": "LRHR",
-            "dataroot": "/home/projects/SAM-Adapter/data/ISTD_Dataset/test",
+            "dataroot": "/home/xinrui/projects/SAM-Adapter/data/ISTD_Dataset/test",
             "datatype": "img", //lmdb or img, path of img files
             "l_resolution": "test_low",
             "r_resolution": "test_high",
