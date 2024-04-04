@@ -94,7 +94,7 @@ class PositionEmbeddingRandom(nn.Module):
 class SAM(nn.Module):
     def __init__(self, inp_size=None, loss=None):
         super().__init__()
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        # self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.embed_dim = 1280
         self.image_encoder = ImageEncoderViT(
             img_size=1024,
@@ -150,9 +150,9 @@ class SAM(nn.Module):
         self.image_embedding_size = inp_size // 16
         self.no_mask_embed = nn.Embedding(1, 256)
 
-    def set_input(self, input, gt_mask):
-        self.input = input.to(self.device)
-        self.gt_mask = gt_mask.to(self.device)
+    # def set_input(self, input, gt_mask):
+    #     self.input = input.to(self.device)
+    #     self.gt_mask = gt_mask.to(self.device)
 
     def get_dense_pe(self) -> torch.Tensor:
         """
@@ -166,16 +166,16 @@ class SAM(nn.Module):
         return self.pe_layer(self.image_embedding_size).unsqueeze(0)
 
 
-    def forward(self):
+    def forward(self, input):
         bs = 1
 
         # Embed prompts
-        sparse_embeddings = torch.empty((bs, 0, self.prompt_embed_dim), device=self.input.device)
+        sparse_embeddings = torch.empty((bs, 0, self.prompt_embed_dim), device=input.device)
         dense_embeddings = self.no_mask_embed.weight.reshape(1, -1, 1, 1).expand(
             bs, -1, self.image_embedding_size, self.image_embedding_size
         )
 
-        self.features = self.image_encoder(self.input)
+        self.features = self.image_encoder(input)
 
         # Predict masks
         low_res_masks, iou_predictions = self.mask_decoder(

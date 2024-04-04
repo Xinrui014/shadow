@@ -22,7 +22,7 @@ if __name__ == "__main__":
     parser.add_argument('-c', '--config', type=str, default='config/shadow.json',
                         help='JSON file for configuration')
     parser.add_argument('-p', '--phase', type=str, choices=['train', 'val'],
-                        help='Run either train(training) or val(generation)', default='train')
+                        help='Run either train(training) or val(generation)', default='val')
     parser.add_argument('-gpu', '--gpu_ids', type=str, default=None)
     parser.add_argument('-debug', '-d', action='store_true')
     parser.add_argument('-enable_wandb', action='store_true')
@@ -63,6 +63,7 @@ if __name__ == "__main__":
     torch.cuda.manual_seed_all(1234)
 
     # dataset
+    phase = "val"
     for phase, dataset_opt in opt['datasets'].items():
         if phase == 'train' and args.phase != 'val':
             train_set = Data.create_dataset(dataset_opt, phase)

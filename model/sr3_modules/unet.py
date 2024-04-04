@@ -245,8 +245,15 @@ class UNet(nn.Module):
         # x_updated_mask = updated_mask.detach()
         x = torch.cat((x_lr, x_mask, x_noisy), dim=1)
 
-        t = self.noise_level_mlp(time) if exists(
-            self.noise_level_mlp) else None
+        # put self.noise_level_mlp into device
+
+        # t = self.noise_level_mlp(time) if exists(
+        #     self.noise_level_mlp) else None
+        if exists(self.noise_level_mlp):
+            self.noise_level_mlp = self.noise_level_mlp.to(time.device)
+            t = self.noise_level_mlp(time)
+        else:
+            t = None
 
         feats = []
         for layer in self.downs:

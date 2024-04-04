@@ -26,6 +26,8 @@ if __name__ == "__main__":
                         help='Run either train(training) or val(generation)', default='train')
     parser.add_argument('-gpu', '--gpu_ids', type=str, default=None)
     parser.add_argument('-debug', '-d', action='store_true')
+    parser.add_argument('-enable_wandb', action='store_true')
+
 
     # parse configs
     args = parser.parse_args()
@@ -158,7 +160,7 @@ if __name__ == "__main__":
                         adp_model.set_input(inp, gt)
                         # use the low_res output 256x256 and then resize to 160x160
 
-                        pred_mask = adp_model.forward()
+                        pred_mask = adp_model.forward(inp)
                         train_data['mask'] = F.interpolate(pred_mask, size=(160,160), mode='bilinear', align_corners=False)
                         diffusion.feed_data(train_data)
 

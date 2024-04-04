@@ -53,10 +53,11 @@ class EMAHelper(object):
         self.shadow = state_dict
 
 class DDPM(BaseModel):
-    def __init__(self, opt):
+    def  __init__(self, opt):
         super(DDPM, self).__init__(opt)
         # define network and load pretrained models
-        self.netG = self.set_device(networks.define_G(opt))
+        self.netG = networks.define_G(opt)
+        # self.netG = self.set_device(networks.define_G(opt))
         self.schedule_phase = None
         self.ema_helper = EMAHelper()
         self.ema_helper.register(self.netG)
@@ -64,42 +65,43 @@ class DDPM(BaseModel):
         self.set_loss()
         self.set_new_noise_schedule(
             opt['model']['beta_schedule']['train'], schedule_phase='train')
-        if self.opt['phase'] == 'train':
-            self.netG.train()
-            # find the parameters to optimize
-            if opt['model']['finetune_norm']:
-                optim_params = []
-                for k, v in self.netG.named_parameters():
-                    v.requires_grad = False
-                    if k.find('transformer') >= 0:
-                        v.requires_grad = True
-                        v.data.zero_()
-                        optim_params.append(v)
-                        logger.info(
-                            'Params [{:s}] initialized to 0 and will optimize.'.format(k))
-            else:
-                optim_params = list(self.netG.parameters())
-
-            self.optG = torch.optim.Adam(
-                optim_params, lr=opt['train']["optimizer"]["lr"])
-            self.log_dict = OrderedDict()
-        self.load_network()
+        # if self.opt['phase'] == 'train':
+        #     self.netG.train()
+        #     # find the parameters to optimize
+        #     if opt['model']['finetune_norm']:
+        #         optim_params = []
+        #         for k, v in self.netG.named_parameters():
+        #             v.requires_grad = False
+        #             if k.find('transformer') >= 0:
+        #                 v.requires_grad = True
+        #                 v.data.zero_()
+        #                 optim_params.append(v)
+        #                 logger.info(
+        #                     'Params [{:s}] initialized to 0 and will optimize.'.format(k))
+        #     else:
+        #         optim_params = list(self.netG.parameters())
+        #
+        #     self.optG = torch.optim.Adam(
+        #         optim_params, lr=opt['train']["optimizer"]["lr"])
+        #     self.log_dict = OrderedDict()
+        # self.load_network()
         # self.print_network()
 
-    def feed_data(self, data):
-        self.data = self.set_device(data)
+    # def feed_data(self, data):
+    #     self.data = self.set_device(data)
 
     def optimize_parameters(self):
-        self.optG.zero_grad()
-        l_pix = self.netG(self.data)
-        # need to average in multi-gpu
-        b, c, h, w = self.data['HR'].shape
-        l_pix = l_pix.sum()/int(b*c*h*w)
-        l_pix.backward()
-        self.optG.step()
-        self.ema_helper.update(self.netG)
-        # set log
-        self.log_dict['l_pix'] = l_pix.item()
+        pass
+        # self.optG.zero_grad()
+        # l_pix = self.netG(self.data)
+        # # need to average in multi-gpu
+        # b, c, h, w = self.data['HR'].shape
+        # l_pix = l_pix.sum()/int(b*c*h*w)
+        # l_pix.backward()
+        # self.optG.step()
+        # self.ema_helper.update(self.netG)
+        # # set log
+        # self.log_dict['l_pix'] = l_pix.item()
 
     def test(self, continous=False):
         self.netG.eval()
@@ -122,22 +124,24 @@ class DDPM(BaseModel):
         self.netG.train()
 
     def set_loss(self):
-        if isinstance(self.netG, nn.DataParallel):
-            self.netG.module.set_loss(self.device)
-        else:
-            self.netG.set_loss(self.device)
+        # if isinstance(self.netG, nn.DataParallel):
+        #     self.netG.module.set_loss(self.device)
+        # else:
+        self.netG.set_loss()
 
     def set_new_noise_schedule(self, schedule_opt, schedule_phase='train'):
         if self.schedule_phase is None or self.schedule_phase != schedule_phase:
             self.schedule_phase = schedule_phase
-            if isinstance(self.netG, nn.DataParallel):
-                self.netG.module.set_new_noise_schedule(
-                    schedule_opt, self.device)
-            else:
-                self.netG.set_new_noise_schedule(schedule_opt, self.device)
+            self.schedule_phase = schedule_phase
+            # if isinstance(self.netG, nn.DataParallel):
+            #     self.netG.module.set_new_noise_schedule(
+            #         schedule_opt, self.device)
+            # else:
+            #     self.netG.set_new_noise_schedule(schedule_opt, self.device)
+            self.netG.set_new_noise_schedule(schedule_opt, self.device)
 
-    def get_current_log(self):
-        return self.log_dict
+    # def get_current_log(self):
+    #     return self.log_dict
 
     def get_current_visuals(self, need_LR=True, sample=False):
         out_dict = OrderedDict()
@@ -188,8 +192,8 @@ class DDPM(BaseModel):
         logger.info(
             'Saved model in [{:s}] ...'.format(gen_path))
 
-    def load_network(self):
-        load_path = self.opt['path']['resume_state']
+    def load_network(self, load_path=None):
+        # load_path = self.opt['path']['resume_state']
         if load_path is not None:
             logger.info(
                 'Loading pretrained model for G [{:s}] ...'.format(load_path))
@@ -197,8 +201,8 @@ class DDPM(BaseModel):
             opt_path = '{}_opt.pth'.format(load_path)
             # gen
             network = self.netG
-            if isinstance(self.netG, nn.DataParallel):
-                network = network.module
+            # if isinstance(self.netG, nn.DataParallel):
+            #     network = network.module
             # network.load_state_dict(torch.load(
             #     gen_path), strict=(not self.opt['model']['finetune_norm']))
             network.load_state_dict(torch.load(
