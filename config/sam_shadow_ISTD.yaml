@@ -1,0 +1,79 @@
+name: train_diffusion
+phase: train
+state: ddpm # this state means use pre generated SAM mask as input in dataloader, train diffusion
+#state: sam+ddpm # the original state is using gt mask and train SAM->diffusion together(is under coding)
+
+datasets:
+  train:
+    name: ISTD_Dataset_train
+    mode: HR
+#    dataroot: /home/xinrui/projects/ShadowDiffusion/data/sam_ISTD/train # use sam mask
+    dataroot: ./data/sam_ISTD/train
+    batch_size: 12
+    num_workers: 8
+    use_shuffle: true
+  test:
+    name: ISTD_Dataset_val
+    mode: LRHR
+    dataroot: ./data/sam_ISTD/test
+    batch_size: 1
+
+model:
+  which_model_G: sr3
+  unet:
+    in_channel: 7
+    out_channel: 3
+    inner_channel: 64
+    norm_groups: 16
+    channel_multiplier:
+      - 1
+      - 2
+      - 4
+      - 8
+    attn_res:
+      - 16
+    res_blocks: 2
+    dropout: 0
+  beta_schedule:
+    train:
+      schedule: linear
+      n_timestep: 1000
+      linear_start: 1e-4
+      linear_end: 0.02
+    val:
+      schedule: linear
+      n_timestep: 1000
+      linear_start: 1e-4
+      linear_end: 0.02
+  diffusion:
+    image_size: 512
+    channels: 3
+    conditional: true
+
+sam:
+  input_size: 1024
+  loss: iou
+  lr: 3e-5
+
+train:
+  gpu_ids:
+    - 1
+  max_epochs: 200
+  every_n_epochs: 20
+  optimizer:
+    lr: 3e-5
+    max_lr: 1e-2
+    warm_up : True
+
+test:
+  gpu_ids:
+    - 1
+
+
+#  dataroot: /home/xinrui/projects/SAM-Adapter/data/ISTD_Dataset/train
+#  ddpm_dataroot: /home/xinrui/projects/ShadowDiffusion/data/sam_ISTD/train
+
+
+ckpt_path:
+  'sam': ./experiments/official_test/SAM_adapter_ckpt/model_epoch_best.pth
+  'ddpm': ./experiments/official_test/checkpoint/ISTD_dataset/I260000_E3096 # two ckpts share same name
