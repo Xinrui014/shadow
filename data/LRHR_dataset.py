@@ -5,6 +5,7 @@ from torch.utils.data import Dataset
 import random
 import data.util as Util
 import os
+from torchvision import transforms
 
 
 class LRHRDataset(Dataset):
@@ -20,14 +21,10 @@ class LRHRDataset(Dataset):
             gt_dir = 'train_C'
             input_dir = 'train_A'
             mask_dir = 'train_B'
-            # gt_dir = 'Normal'
-            # input_dir = 'Low'
         else:
             gt_dir = 'test_C'
             input_dir = 'test_A'
             mask_dir = 'test_B'
-            # gt_dir = 'Normal'
-            # input_dir = 'Low'
 
         if datatype == 'lmdb':
             self.env = lmdb.open(dataroot, readonly=True, lock=False,
@@ -47,13 +44,7 @@ class LRHRDataset(Dataset):
             self.hr_path = [os.path.join(dataroot, gt_dir, x) for x in clean_files]
             self.sr_path = [os.path.join(dataroot, input_dir, x) for x in noisy_files]
             self.mask_path = [os.path.join(dataroot, mask_dir, x) for x in mask_files]
-            # self.sr_path = Util.get_paths_from_images(
-            #     '{}/sr_{}_{}'.format(dataroot, l_resolution, r_resolution))
-            # self.hr_path = Util.get_paths_from_images(
-            #     '{}/hr_{}'.format(dataroot, r_resolution))
-            # if self.need_LR:
-            #     self.lr_path = Util.get_paths_from_images(
-            #         '{}/lr_{}'.format(dataroot, l_resolution))
+
             self.dataset_len = len(self.hr_path)
             if self.data_len <= 0:
                 self.data_len = self.dataset_len
@@ -106,7 +97,6 @@ class LRHRDataset(Dataset):
                 if self.need_LR:
                     img_LR = Image.open(BytesIO(lr_img_bytes)).convert("RGB")
         else:
-
             img_SR = Image.open(self.sr_path[index]).convert("RGB")
             if self.split == 'train':
                 hr_name = self.sr_path[index].replace('.jpg', '_no_shadow.jpg')
@@ -125,3 +115,55 @@ class LRHRDataset(Dataset):
             [img_SR, img_HR, img_mask] = Util.transform_augment(
                 [img_SR, img_HR, img_mask], split=self.split, min_max=(-1, 1))
             return {'HR': img_HR, 'SR': img_SR, 'mask': img_mask, 'Index': index}
+
+class TrainDataset(Dataset):
+    def __init__(self, dataroot, sam_inp_size=1024):
+        gt_dir = 'train_C'
+        input_dir = 'train_A'
+        mask_dir = 'train_B'
+
+        clean_files = sorted(os.listdir(os.path.join(dataroot, gt_dir)))
+        noisy_files = sorted(os.listdir(os.path.join(dataroot, input_dir)))
+        mask_files = sorted(os.listdir(os.path.join(dataroot, mask_dir)))
+
+        self.hr_path = [os.path.join(dataroot, gt_dir, x) for x in clean_files]
+        self.sr_path = [os.path.join(dataroot, input_dir, x) for x in noisy_files]
+        self.mask_path = [os.path.join(dataroot, mask_dir, x) for x in mask_files]
+
+        self.img_transform = transforms.Compose([
+            transforms.Resize((sam_inp_size, sam_inp_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std=[0.229, 0.224, 0.225])
+        ])
+        self.mask_transform = transforms.Compose([
+            transforms.Resize((sam_inp_size, sam_inp_size), interpolation=Image.NEAREST),
+            transforms.ToTensor(),
+        ])
+
+
+    def __len__(self):
+        return len(self.hr_path)
+
+    def __getitem__(self, index):
+        img_LR = None
+
+        img_SR_original = Image.open(self.sr_path[index]).convert("RGB")
+
+        hr_name = self.sr_path[index].replace('.jpg', '_no_shadow.jpg')
+        hr_name = hr_name.replace('_A', '_C')
+
+        img_HR_original = Image.open(hr_name).convert("RGB")
+        img_mask_original = Image.open(self.mask_path[index]).convert("1")
+        [shadow_img_SR, shadow_img_HR, shadow_img_mask] = Util.transform_augment([img_SR_original, img_HR_original, img_mask_original], split="train", min_max=(-1, 1))
+
+        # sam input and sam mask
+        sam_img_SR = self.img_transform(img_SR_original)
+        sam_img_mask = self.mask_transform(img_mask_original)
+
+
+
+
+        return {'HR': shadow_img_HR, 'SR': shadow_img_SR, 'mask': shadow_img_mask,
+                'Index': index,
+                'sam_SR': sam_img_SR, 'sam_mask': sam_img_mask}

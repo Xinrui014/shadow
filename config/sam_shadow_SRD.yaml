@@ -1,6 +1,7 @@
 name: train_SRD_diffusion
-version: version1
+version: debug_2
 phase: train
+ckpt_name: ""
 #state: ddpm # this state means use pre generated SAM mask as input in dataloader, train diffusion
 #state: sam+ddpm # the original state is using gt mask and train SAM->diffusion together(is under coding)
 
@@ -9,7 +10,7 @@ datasets:
     name: SRD_sam_train
     mode: HR
     dataroot: ./dataset/SRD_sam_mask_B/train # use sam mask
-    batch_size: 48
+    batch_size: 1
     num_workers: 8
     use_shuffle: true
   test:
@@ -55,7 +56,7 @@ sam:
   loss: iou
 
 train:
-  gpu_ids: [0, 1]
+  gpu_ids: [2]
   max_epochs: 1000
   every_n_epochs: 100
   optimizer:
@@ -63,7 +64,7 @@ train:
 
 test:
   gpu_ids:
-    - 1
+    - 0
 
 
 #  dataroot: /home/xinrui/projects/SAM-Adapter/data/ISTD_Dataset/train

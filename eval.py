@@ -6,8 +6,9 @@ import glob
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--path', type=str,
-                        default='experiments/basic_sr_ffhq_210809_142238/results')
+                        default='/home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion/experiments_lightning/train_SRD_diffusion/train_SRD_diffusion_version_lr_1e-5/results_599')
     args = parser.parse_args()
+    a = args.path
     real_names = list(glob.glob('{}/*_hr.png'.format(args.path)))
     fake_names = list(glob.glob('{}/*_sr.png'.format(args.path)))
 

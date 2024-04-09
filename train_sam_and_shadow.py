@@ -9,10 +9,12 @@ from torch import nn
 import argparse
 import logging
 import hydra
+import torch
 import core.logger as Logger
 import torch.nn.functional as F
 from torchvision import transforms
 from torch.utils.data import DataLoader
+from torchvision.utils import save_image
 from model.sam_adapter.sam_adapt import SAM
 import core.metrics as Metrics
 from data.LRHR_dataset import LRHRDataset, TrainDataset
@@ -23,7 +25,6 @@ from omegaconf import DictConfig
 import model.networks as networks
 from lightning.pytorch.loggers import WandbLogger
 from lightning.pytorch.loggers import TensorBoardLogger
-
 
 def apply_low_pass_filter(mask, kernel_size=7):
     # Create a Gaussian kernel
@@ -38,15 +39,49 @@ def apply_low_pass_filter(mask, kernel_size=7):
 
     return filtered_mask
 
+class SamshadowDataModule(L.LightningDataModule):
+    def __init__(self, args):
+        super().__init__()
+        self.num_workers = args.datasets.train.num_workers
+        self.shuffle = args.datasets.train.use_shuffle
+        self.args = args
+
+    def setup(self, stage="fit"):
+        if stage == "fit":
+            self.train_data = TrainDataset(self.args.datasets.train.dataroot, 1024)
+        elif stage == "test":
+            self.test_data = LRHRDataset(self.args.datasets.test.dataroot, data_len=-1, datatype='img', l_resolution='test_low', r_resolution='test_high',
+                                         split='test', need_LR=True)
+
+    def train_dataloader(self):
+        self.train_dataloader = DataLoader(self.train_data,
+                                           batch_size=self.args.datasets.train.batch_size,
+                                           shuffle=self.shuffle,
+                                           num_workers=self.num_workers,
+                                           pin_memory=True)
+        return self.train_dataloader
+
+    def test_dataloader(self):
+        self.test_dataloader = DataLoader(self.test_data, batch_size=self.args.datasets.test.batch_size, shuffle=False, num_workers=0, pin_memory=True)
+        return self.test_dataloader
 # define a LightningModule, in which I have shadowDiffusion and SAM_adapter two models
 class sam_shadow(L.LightningModule):
     def __init__(self, sam_adapter, shadowdiffusion, args, path=None):
         super().__init__()
+        self.args = args
         self.diffusion = shadowdiffusion(args)
+        self.optimizer_param = args.train.optimizer
+        self.diffusion.set_loss()
         self.sam = sam_adapter(args.sam.input_size, args.sam.loss)
-        self.lr = 3e-5
+
         if path is not None:
-            self.load_pretrained_models(path.ddpm, path.sam)
+            self.load_pretrained_models(path)
+            if args.phase == 'train':
+                # optimizer
+                opt_path = '{}_opt.pth'.format(path.ddpm)
+                opt = torch.load(opt_path)
+                self.begin_step = opt['iter']
+                self.begin_epoch = opt['epoch']
         self.save_hyperparameters()
 
 
@@ -60,34 +95,35 @@ class sam_shadow(L.LightningModule):
             if param.requires_grad:
                 print("sam is not freeze")
 
-        inp = train_data['SR']
-        gt = train_data['mask']
-
-        inp = F.interpolate(inp, size=(1024, 1024), mode='bilinear', align_corners=False)
-        gt = F.interpolate(gt, size=(1024, 1024), mode='bilinear', align_corners=False)
-
-        sam_pred_mask = self.sam(inp)
-        # sam_pred_mask = F.interpolate(sam_pred_mask, size=(256, 256), mode='bilinear', align_corners=False)
-        save_mask = sam_pred_mask[0].detach().cpu().numpy()
-        save_mask = np.squeeze((save_mask * 255).astype(np.uint8))
-        cv2.imwrite('mask.png', save_mask)
+        sam_input = train_data['sam_SR']
+        sam_mask = train_data['sam_mask']
+        sam_pred_mask = self.sam(sam_input)
+        sam_pred_mask = torch.sigmoid(sam_pred_mask)
+        # save_image(sam_pred_mask, 'sam_pred_output_160.png')
+        # save_mask = sam_pred_mask[0].detach().cpu().numpy()
+        # save_mask = np.squeeze(save_mask)
+        # save_mask = (save_mask-np.min(save_mask))/(np.max(save_mask)-np.min(save_mask))
+        # cv2.imwrite('mask.png', (save_mask*255.).astype(np.uint8))
 
         train_data['mask'] = sam_pred_mask
         l_pix = self.diffusion.netG(train_data)
         b, c, h, w = self.diffusion.data['HR'].shape
         l_pix = l_pix.sum() / int(b * c * h * w)
 
+        # need another loss to constrain the sam_pred_mask
+
+
         return l_pix
 
     def load_pretrained_models(self, path):
-        # ddpm_state_dict = torch.load(ddpm_checkpoint_path)
-        self.diffusion.load_network(path.ddpm)
+        gen_path = '{}_gen.pth'.format(path.ddpm)
+        self.diffusion.load_state_dict(torch.load(gen_path), strict=False)
 
         sam_state_dict = torch.load(path.sam)
         self.sam.load_state_dict(sam_state_dict, strict=False)
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(self.parameters(), lr=3e-5)
         return optimizer
 
 # define the shadow_diffusion model
@@ -185,40 +221,14 @@ class diffusion(L.LightningModule):
 
         return optimizer
 
-class SamshadowDataModule(L.LightningDataModule):
-    def __init__(self, args):
-        super().__init__()
-        self.num_workers = args.datasets.train.num_workers
-        self.shuffle = args.datasets.train.use_shuffle
-        self.args = args
-
-    def setup(self, stage="fit"):
-        if stage == "fit":
-            self.train_data = LRHRDataset(self.args.datasets.train.dataroot, datatype='img', l_resolution='low', r_resolution='high')
-            # self.train_data = TrainDataset(self.args.datasets.train.dataroot, 1024)
-        elif stage == "test":
-            self.test_data = LRHRDataset(self.args.datasets.test.dataroot, data_len=-1, datatype='img', l_resolution='test_low', r_resolution='test_high',
-                                         split='test', need_LR=True)
-
-    def train_dataloader(self):
-        self.train_dataloader = DataLoader(self.train_data,
-                                           batch_size=self.args.datasets.train.batch_size,
-                                           shuffle=self.shuffle,
-                                           num_workers=self.num_workers,
-                                           pin_memory=True)
-        return self.train_dataloader
-
-    def test_dataloader(self):
-        self.test_dataloader = DataLoader(self.test_data, batch_size=self.args.datasets.test.batch_size, shuffle=False, num_workers=0, pin_memory=True)
-        return self.test_dataloader
-
 # using SAM mask train diffusion
 def train(args: DictConfig) -> None:
     logger = TensorBoardLogger(save_dir=f"./experiments_lightning/{args.name}", name=args.name+"_"+args.version+"_logger")
     data_module = SamshadowDataModule(args)
     data_module.setup("fit")
     ckpt_path = args.ckpt_path
-    model = diffusion(networks.define_G, args, ckpt_path)
+    # model = diffusion(networks.define_G, args, ckpt_path)
+    model = sam_shadow(SAM, networks.define_G, args, ckpt_path)
 
     # load training parameters
     save_model_name = args.name

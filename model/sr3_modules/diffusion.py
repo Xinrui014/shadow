@@ -184,7 +184,7 @@ class GaussianDiffusion(nn.Module):
         return model_mean + noise * (0.5 * model_log_variance).exp()
 
     @torch.no_grad()
-    def p_sample_loop(self, x_lr, mask_0, h_hat, continous=False):
+    def p_sample_loop(self, x_lr, mask_0, continous=False):
         device = self.betas.device
         n = x_lr.size(0)
         noise = torch.randn_like(x_lr)
@@ -252,8 +252,11 @@ class GaussianDiffusion(nn.Module):
         return self.p_sample_loop((batch_size, channels, image_size, image_size), continous)
 
     @torch.no_grad()
-    def super_resolution(self, x_lr, mask, h_hat, continous=False):
-        return self.p_sample_loop(x_lr, mask, h_hat, continous)
+    # def super_resolution(self, x_lr, mask, h_hat, continous=False):
+    #     return self.p_sample_loop(x_lr, mask, h_hat, continous)
+    # remove h_hat
+    def super_resolution(self, x_lr, mask, continous=False):
+        return self.p_sample_loop(x_lr, mask, continous)
 
     def q_sample(self, x_start, continuous_sqrt_alpha_cumprod, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))
@@ -270,7 +273,7 @@ class GaussianDiffusion(nn.Module):
         # t = np.random.randint(1, self.num_timesteps + 1)
         t = torch.randint(low=0, high=self.num_timesteps, size=(n // 2 + 1,)).to(x_start.device)
         t = torch.cat([t, self.num_timesteps - t - 1], dim=0)[:n]
-        b = self.betas
+        b = self.betas.to(x_start.device)
         a = (1 - b).cumprod(dim=0).index_select(0, t).view(-1, 1, 1, 1)
         e = torch.randn_like(x_start)
         x_noisy = x_start * a.sqrt() + e * (1.0 - a).sqrt()
