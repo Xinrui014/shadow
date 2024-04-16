@@ -26,10 +26,12 @@ def init_weights(layer):
         nn.init.normal_(layer.weight, mean=1.0, std=0.02)
         nn.init.constant_(layer.bias, 0.0)
 
+
 class BBCEWithLogitLoss(nn.Module):
     '''
     Balanced BCEWithLogitLoss
     '''
+
     def __init__(self):
         super(BBCEWithLogitLoss, self).__init__()
 
@@ -45,6 +47,7 @@ class BBCEWithLogitLoss(nn.Module):
 
         return loss
 
+
 def _iou_loss(pred, target):
     pred = torch.sigmoid(pred)
     inter = (pred * target).sum(dim=(2, 3))
@@ -52,6 +55,7 @@ def _iou_loss(pred, target):
     iou = 1 - (inter / union)
 
     return iou.mean()
+
 
 class PositionEmbeddingRandom(nn.Module):
     """
@@ -95,23 +99,24 @@ class SAM(nn.Module):
     def __init__(self, inp_size=None, loss=None):
         super().__init__()
         # self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.pred_mask = None
         self.embed_dim = 1280
         self.image_encoder = ImageEncoderViT(
             img_size=1024,
             patch_size=16,
             in_chans=3,
-            embed_dim=1280, #768
-            depth=32, # 12
-            num_heads=16, # 12
+            embed_dim=1280,  # 768
+            depth=32,  # 12
+            num_heads=16,  # 12
             mlp_ratio=4,
             out_chans=256,
-            qkv_bias= True,
+            qkv_bias=True,
             norm_layer=partial(torch.nn.LayerNorm, eps=1e-6),
             act_layer=nn.GELU,
             use_rel_pos=True,
             rel_pos_zero_init=True,
             window_size=14,
-            global_attn_indexes= [7, 15, 23, 31],
+            global_attn_indexes=[7, 15, 23, 31],
         )
         self.prompt_embed_dim = 256
         self.mask_decoder = MaskDecoder(
@@ -131,8 +136,6 @@ class SAM(nn.Module):
         #     for k, p in self.encoder.named_parameters():
         #         if "prompt" not in k and "mask_decoder" not in k and "prompt_encoder" not in k:
         #             p.requires_grad = False
-
-
 
         self.loss_mode = loss
         if self.loss_mode == 'bce':
@@ -165,7 +168,6 @@ class SAM(nn.Module):
         """
         return self.pe_layer(self.image_embedding_size).unsqueeze(0)
 
-
     def forward(self, input):
         bs = 1
 
@@ -178,7 +180,7 @@ class SAM(nn.Module):
         self.features = self.image_encoder(input)
 
         # Predict masks
-        low_res_masks, iou_predictions = self.mask_decoder(
+        low_res_masks, iou_predictions, low_res_masks_soft = self.mask_decoder(
             image_embeddings=self.features,
             image_pe=self.get_dense_pe(),
             sparse_prompt_embeddings=sparse_embeddings,
@@ -189,7 +191,7 @@ class SAM(nn.Module):
         # Upscale the masks to the original image resolution
         masks = self.postprocess_masks(low_res_masks, self.inp_size, self.inp_size)
         self.pred_mask = masks
-        return low_res_masks
+        return low_res_masks, low_res_masks_soft
 
     def infer(self, input):
         bs = 1
@@ -216,10 +218,10 @@ class SAM(nn.Module):
         return masks
 
     def postprocess_masks(
-        self,
-        masks: torch.Tensor,
-        input_size: Tuple[int, ...],
-        original_size: Tuple[int, ...],
+            self,
+            masks: torch.Tensor,
+            input_size: Tuple[int, ...],
+            original_size: Tuple[int, ...],
     ) -> torch.Tensor:
         """
         Remove padding and upscale masks to the original image size.
@@ -257,11 +259,11 @@ class SAM(nn.Module):
     def optimize_parameters(self):
         self.forward()
         self.optimizer.zero_grad()  # set G's gradients to zero
-        self.backward_G()  # calculate graidents for G
-        self.optimizer.step()  # udpate G's weights
+        self.backward_G()  # calculate gradients for G
+        self.optimizer.step()  # update G's weights
 
     def set_requires_grad(self, nets, requires_grad=False):
-        """Set requies_grad=Fasle for all the networks to avoid unnecessary computations
+        """Set requires_grad=False for all the networks to avoid unnecessary computations
         Parameters:
             nets (network list)   -- a list of networks
             requires_grad (bool)  -- whether the networks require gradients or not

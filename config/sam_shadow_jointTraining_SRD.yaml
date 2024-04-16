@@ -1,0 +1,79 @@
+name: sam_shadow_jointTraining_SRD
+version: debug_test
+phase: test
+ckpt_name: epoch_19
+
+#state: ddpm # this state means use pre generated SAM mask as input_image in dataloader, train diffusion
+#state: sam+ddpm # the original state is using gt mask and train SAM->diffusion together(is under coding)
+samshadow_ckpt_path: /home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion/experiments_lightning/sam_shadow_jointTraining_SRD/sam_shadow_jointTraining_SRD_jointTraining_DDP_16/epoch=19.ckpt
+#save_result_path: /home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion/experiments_lightning/sam_shadow_jointTraining_SRD/sam_shadow_jointTraining_SRD_jointTraining_DDP_16/last/test_results
+datasets:
+  train:
+    name: SRD_sam_train
+    mode: HR
+    dataroot: ./dataset/SRD_sam_mask_B/train # use sam mask
+    batch_size: 8
+    num_workers: 8
+    use_shuffle: true
+  test:
+    name: SRD_sam_val
+    mode: LRHR
+    dataroot: ./dataset/SRD_sam_mask_B/test
+    batch_size: 1
+
+model:
+  which_model_G: sr3
+  unet:
+    in_channel: 7
+    out_channel: 3
+    inner_channel: 64
+    norm_groups: 16
+    channel_multiplier:
+      - 1
+      - 2
+      - 4
+      - 8
+    attn_res:
+      - 16
+    res_blocks: 2
+    dropout: 0
+  beta_schedule:
+    train:
+      schedule: linear
+      n_timestep: 1000
+      linear_start: 1e-4
+      linear_end: 0.02
+    val:
+      schedule: linear
+      n_timestep: 1000
+      linear_start: 1e-4
+      linear_end: 0.02
+  diffusion:
+    image_size: 512
+    channels: 3
+    conditional: true
+
+sam:
+  input_size: 1024
+  loss: iou
+
+train:
+  gpu_ids: [0]
+  max_epochs: 200
+  every_n_epochs: 20
+  optimizer:
+    lr: 1e-5
+
+test:
+  gpu_ids: [0]
+
+warmup_epochs: 10
+max_epochs: 200
+
+#  dataroot: /home/xinrui/projects/SAM-Adapter/data/ISTD_Dataset/train
+#  ddpm_dataroot: /home/xinrui/projects/ShadowDiffusion/data/sam_ISTD/train
+
+
+ckpt_path:
+  'sam': ./experiments/official_test/SAM_adapter_ckpt/model_epoch_best.pth
+  'ddpm': ./experiments/official_test/checkpoint/SRD_dataset/I2130000_E12080 # two ckpts share same name

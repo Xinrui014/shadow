@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 from model.sam_adapter.sam_adapt import SAM
 import core.metrics as Metrics
-from data.LRHR_dataset import LRHRDataset, TrainDataset, TestDataset
+from data.LRHR_dataset import LRHRDataset, TrainDataset
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.strategies import DDPStrategy
@@ -46,7 +46,7 @@ def _iou_loss(pred, target):
     return iou.mean()
 
 
-class SamshadowDataModule(L.LightningDataModule):
+class SamShadowDataModule(L.LightningDataModule):
     def __init__(self, args):
         super().__init__()
         self.args = args
@@ -57,7 +57,9 @@ class SamshadowDataModule(L.LightningDataModule):
         if stage == "fit":
             self.train_data = TrainDataset(self.args.datasets.train.dataroot, 1024)
         elif stage == "test":
-            self.test_data = TestDataset(self.args.datasets.test.dataroot, 1024)
+            self.test_data = LRHRDataset(self.args.datasets.test.dataroot, data_len=-1, datatype='img',
+                                         l_resolution='test_low', r_resolution='test_high',
+                                         split='test', need_LR=True)
 
     def train_dataloader(self):
         dataloader = DataLoader(self.train_data,
@@ -67,7 +69,7 @@ class SamshadowDataModule(L.LightningDataModule):
                                 pin_memory=True)
         return dataloader
 
-    def test_dataloader(self):
+    def predict_dataloader(self):
         dataloader = DataLoader(self.test_data, batch_size=self.args.datasets.test.batch_size, shuffle=False,
                                 num_workers=0, pin_memory=True)
         return dataloader
@@ -129,12 +131,12 @@ def soft_mask_loss(soft_mask, shadow_input):
     return laplacian_loss, gradient_loss
 
 
-class sam_shadow(L.LightningModule):
-    def __init__(self, sam_adapter, shadowdiffusion, args, path=None, steps_per_epoch=168):
-        super(sam_shadow, self).__init__()
+class SamShadow(L.LightningModule):
+    def __init__(self, sam_adapter, shadow_diffusion, args, path=None, steps_per_epoch=168):
+        super(SamShadow, self).__init__()
         self.args = args
         self.steps_per_epoch = int(steps_per_epoch)
-        self.diffusion = shadowdiffusion(args)
+        self.diffusion = shadow_diffusion(args)
         self.optimizer_param = args.train.optimizer
         self.diffusion.set_loss()
         self.sam = sam_adapter(args.sam.input_size, args.sam.loss)
@@ -153,10 +155,10 @@ class sam_shadow(L.LightningModule):
                 self.begin_epoch = opt['epoch']
 
             # transfer output_hypernetworks_mlps parameter to soft_mask_decoder_adapter
-            # for i in range(self.sam.mask_decoder.num_mask_tokens):
-            #     self.sam.mask_decoder.soft_mask_decoder_adapter[i].load_state_dict(
-            #         self.sam.mask_decoder.output_hypernetworks_mlps[i].state_dict()
-            #     )
+            for i in range(self.sam.mask_decoder.num_mask_tokens):
+                self.sam.mask_decoder.soft_mask_decoder_adapter[i].load_state_dict(
+                    self.sam.mask_decoder.output_hypernetworks_mlps[i].state_dict()
+                )
 
         self.save_hyperparameters()
         self.save_model_name = args.name
@@ -206,14 +208,14 @@ class sam_shadow(L.LightningModule):
 
         return self.diffusion_loss + self.hard_mask_loss + self.soft_mask_loss
 
-    def test_step(self, test_data):
+    def predict_step(self, test_data):
         filename = test_data['LR_path'][0].split('/')[-1].split('.')[0]
         test_data = {key: val for key, val in test_data.items() if key != "LR_path"}
         # Sam adapter input 1024x1024
         sam_input = test_data['sam_SR']
         sam_pred_mask, sam_pred_soft_mask = self.sam(sam_input)
         # diffusion input 256x256
-        test_data['mask'] = F.interpolate(sam_pred_mask, (256, 256), mode='bilinear', align_corners=False)
+        test_data['mask'] = F.interpolate(sam_pred_soft_mask, (256, 256), mode='bilinear', align_corners=False)
         shadow_removal_sr, diffusion_mask_pred = self.diffusion.super_resolution(test_data['SR'], test_data['mask'], continous=False)
 
         # calculate PSNR and SSIM here
@@ -226,8 +228,9 @@ class sam_shadow(L.LightningModule):
 
         self.log(f'{filename}_PSNR', eval_psnr, prog_bar=True)
         self.log(f'{filename}_SSIM', eval_ssim)
-        save_path = "/home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion/experiments_lightning/sam_shadow_jointTraining_SRD/sam_shadow_jointTraining_SRD_jointTraining_DDP_16/epoch_19/"
+
         # save SR and mask_pred
+        save_path = f'./experiments_lightning/{self.args.name}/test_with_LPfilter/results/'
         if not os.path.exists(save_path):
             os.mkdir(save_path)
         sr_path = os.path.join(save_path, f'{filename}_sr.png')
@@ -236,16 +239,10 @@ class sam_shadow(L.LightningModule):
         hr_path = os.path.join(save_path, f'{filename}_hr.png')
         hr_img = Image.fromarray(hr_img)
         hr_img.save(hr_path)
-        mask = diffusion_mask_pred.squeeze().cpu().numpy() * 255
+        mask = self.mask_pred.squeeze().cpu().numpy() * 255
         mask_path = os.path.join(save_path, f'{filename}_mask.png')
         mask_img = Image.fromarray(mask.astype(np.uint8))
         mask_img.save(mask_path)
-
-    def on_test_end(self):
-        avg_psnr = np.mean(self.PSNR)
-        avg_ssim = np.mean(self.SSIM)
-        print(f'Average PSNR: {avg_psnr}')
-        print(f'Average SSIM: {avg_ssim}')
 
 
     def load_pretrained_models(self, path):
@@ -278,11 +275,11 @@ class sam_shadow(L.LightningModule):
 def train(args: DictConfig) -> None:
     logger = TensorBoardLogger(save_dir=f"./experiments_lightning/{args.name}",
                                name=args.name + "_" + args.version + "_logger")
-    data_module = SamshadowDataModule(args)
+    data_module = SamShadowDataModule(args)
     data_module.setup("fit")
     ckpt_path = args.ckpt_path
     # model = diffusion(networks.define_G, args, ckpt_path)
-    model = sam_shadow(SAM, networks.define_G, args, ckpt_path)
+    model = SamShadow(SAM, networks.define_G, args, ckpt_path)
 
     # load training parameters
     save_model_name = args.name
@@ -315,20 +312,20 @@ def train(args: DictConfig) -> None:
 
 
 def sample(args: DictConfig) -> None:
-    logger = TensorBoardLogger(save_dir=f"./experiments_lightning/{args.name}", name=args.ckpt_name)
-    data_module = SamshadowDataModule(args)
+    logger = TensorBoardLogger(save_dir=f"./experiments_lightning/{args.name}", name="test_with_LPfilter")
+    data_module = SamShadowDataModule(args)
     data_module.setup("test")
-    model = sam_shadow.load_from_checkpoint(args.samshadow_ckpt_path)
-    tester = L.Trainer(
+    model = SamShadow.load_from_checkpoint(args.samshadow_ckpt_path)
+    predictor = L.Trainer(
         accelerator='gpu',
         devices=args.test.gpu_ids,
         max_epochs=-1,
         benchmark=True,
         logger=logger
     )
-    test_result = tester.test(model, data_module)
+    test_result = predictor.predict(model, data_module)
     PSNR_SSIM_list_with_name = test_result[0]
-    with open(f'./experiments_lightning/{args.name}/{args.ckpt_name}_PSNR_SSIM_list.log',
+    with open(f'./experiments_lightning/{args.name}/test_with_LPfilter/results/{args.ckpt_name}_PSNR_SSIM_list.log',
               'w') as file:
         for key, value in PSNR_SSIM_list_with_name.items():
             file.write(f"{key}: {value}\n")

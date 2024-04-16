@@ -70,7 +70,7 @@ class sam_shadow(L.LightningModule):
         # sam_pred_mask = F.interpolate(sam_pred_mask, size=(256, 256), mode='bilinear', align_corners=False)
         save_mask = sam_pred_mask[0].detach().cpu().numpy()
         save_mask = np.squeeze((save_mask * 255).astype(np.uint8))
-        cv2.imwrite('mask.png', save_mask)
+        cv2.imwrite('shadow_constrain_searching/mask.png', save_mask)
 
         train_data['mask'] = sam_pred_mask
         l_pix = self.diffusion.netG(train_data)
@@ -267,7 +267,7 @@ def sample(args: DictConfig) -> None:
         for key, value in PSNR_SSIM_list_with_name.items():
             file.write(f"{key}: {value}\n")
 
-@hydra.main(config_path="./config", config_name="sam_shadow_SRD", version_base=None)
+@hydra.main(config_path="./config", config_name="shadow_SRD", version_base=None)
 def main(args: DictConfig) -> None:
     torch.set_float32_matmul_precision("high")
     L.seed_everything(1234)
@@ -280,7 +280,7 @@ def main(args: DictConfig) -> None:
 
 
 if __name__ == "__main__":
-    # config = OmegaConf.load("config/sam_shadow_ISTD.yaml")
+    # config = OmegaConf.load("config/shadow_ISTD.yaml")
     # args = AttrDict(config)
     # main(args)
     main()
