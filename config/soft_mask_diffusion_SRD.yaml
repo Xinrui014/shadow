@@ -1,12 +1,12 @@
-name: fix_sam
-version: test
+name: train_sam_head
+version: version_119
 phase: test
-ckpt_name: last
 
 #state: ddpm # this state means use pre generated SAM mask as input_image in dataloader, train diffusion
 #state: sam+ddpm # the original state is using gt mask and train SAM->diffusion together(is under coding)
-samshadow_ckpt_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/fix_sam/fix_sam_version_1/last.ckpt
-#save_result_path: /home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion/experiments_lightning/sam_shadow_jointTraining_SRD/sam_shadow_jointTraining_SRD_jointTraining_DDP_16/last/test_results
+samshadow_ckpt_path: ./experiments_lightning/train_sam_head/train_sam_head_version_removal_loss/epoch=199.ckpt
+save_result_path: ./experiments_lightning/train_sam_head/train_sam_head_version_removal_loss/result/epoch_199
+
 datasets:
   train:
     name: SRD_sam_train
@@ -58,9 +58,9 @@ sam:
   loss: iou
 
 train:
-  gpu_ids: [2, 3]
+  gpu_ids: [2,3]
   max_epochs: 200
-  every_n_epochs: 20
+  every_n_epochs: 10
   optimizer:
     lr: 1e-5
 

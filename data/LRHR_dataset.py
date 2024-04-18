@@ -165,14 +165,15 @@ class TrainDataset(Dataset):
 
 
         return {'HR': shadow_img_HR, 'SR': shadow_img_SR, 'mask': shadow_img_mask,
-                'Index': index,
+                'Index': index, 'LR_path': self.sr_path[index],
                 'sam_SR': sam_img_SR, 'sam_mask': sam_img_mask}
 
 class TestDataset(Dataset):
-    def __init__(self, dataroot, sam_inp_size=1024):
+    def __init__(self, dataroot, sam_inp_size=1024, data_len=-1):
         gt_dir = 'test_C'
         input_dir = 'test_A'
         mask_dir = 'test_B'
+        self.data_len = data_len
 
         clean_files = sorted(os.listdir(os.path.join(dataroot, gt_dir)))
         noisy_files = sorted(os.listdir(os.path.join(dataroot, input_dir)))
@@ -195,7 +196,10 @@ class TestDataset(Dataset):
 
 
     def __len__(self):
-        return len(self.hr_path)
+        if self.data_len == -1:
+            return len(self.hr_path)
+        else:
+            return self.data_len
 
     def __getitem__(self, index):
         img_SR_original = Image.open(self.sr_path[index]).convert("RGB")
@@ -207,8 +211,10 @@ class TestDataset(Dataset):
         # sam input and sam mask
         sam_img_SR = self.img_transform(img_SR_original)
         sam_img_mask = self.mask_transform(img_mask_original)
+        filename = self.sr_path[index].split('/')[-1].split('.')[0]
 
 
         return {'HR': shadow_img_HR, 'SR': shadow_img_SR, 'mask': shadow_img_mask,
-                'Index': index, 'LR_path': self.sr_path[index],
+                'Index': index, 'filename': filename,
                 'sam_SR': sam_img_SR, 'sam_mask': sam_img_mask}
+

@@ -138,6 +138,7 @@ class sam_shadow(L.LightningModule):
         self.optimizer_param = args.train.optimizer
         self.diffusion.set_loss()
         self.sam = sam_adapter(args.sam.input_size, args.sam.loss)
+        # self.sam = self.sam.to(self.device)
         self.criterionBCE = torch.nn.BCEWithLogitsLoss()
         self.criterionIOU = IOU()
         if args.phase == 'train':
@@ -148,7 +149,7 @@ class sam_shadow(L.LightningModule):
             if args.phase == 'train':
                 # optimizer
                 opt_path = '{}_opt.pth'.format(path.ddpm)
-                opt = torch.load(opt_path)
+                opt = torch.load(opt_path, map_location=self.device)
                 self.begin_step = opt['iter']
                 self.begin_epoch = opt['epoch']
 
@@ -169,9 +170,9 @@ class sam_shadow(L.LightningModule):
             param.requires_grad = False
 
         # open the second head to predict soft head
-        for name, param in self.sam.named_parameters():
-            if "soft_mask_decoder_adapter" in name:
-                param.requires_grad_(True)
+        # for name, param in self.sam.named_parameters():
+        #     if "soft_mask_decoder_adapter" in name:
+        #         param.requires_grad_(True)
 
     def training_step(self, train_data, batch_idx):
 
@@ -183,28 +184,34 @@ class sam_shadow(L.LightningModule):
         sam_mask = train_data['sam_mask']
         sam_pred_mask_, sam_pred_soft_mask = self.sam(sam_input)
         sam_pred_mask = torch.sigmoid(sam_pred_mask_)
+        value = sam_pred_mask.squeeze(0).squeeze(0).detach().cpu().numpy()
+        # value = (value * 255).astype(np.uint8)
+        # # Save the normalized value as a single-channel image
+        # cv2.imwrite('cv2_sam_pred_mask.png', value)
+        # save_image(sam_pred_mask, 'sam_pred_mask.png')
         # here has a BCE+iou loss
         sam_pred_mask_for_loss = F.interpolate(sam_pred_mask, (1024, 1024), mode='bilinear', align_corners=False)
         self.hard_mask_loss = self.criterionBCE(sam_pred_mask_for_loss, sam_mask)
         self.hard_mask_loss += _iou_loss(sam_pred_mask_for_loss, sam_mask)
         self.log('sam_mask_loss', self.hard_mask_loss.item(), on_step=True)
+
         # soft mask loss
         # debug using hard mask
         # laplacian_loss_, gradient_loss_ = soft_mask_loss(sam_pred_soft_mask, train_data['HR'])
-        laplacian_loss, gradient_ori_loss = soft_mask_loss(sam_pred_mask_, train_data['HR'])
+        # laplacian_loss, gradient_ori_loss = soft_mask_loss(sam_pred_mask_, train_data['HR'])
 
-        self.soft_mask_loss = laplacian_loss + 0.1 * gradient_ori_loss
-        self.log('laplacian_loss', laplacian_loss.item(), on_step=True)
-        self.log('gradient_loss', gradient_ori_loss.item(), on_step=True)
-        self.log('soft_mask_loss', self.soft_mask_loss.item(), on_step=True)
+        # self.soft_mask_loss = laplacian_loss + 0.1 * gradient_ori_loss
+        # self.log('laplacian_loss', laplacian_loss.item(), on_step=True)
+        # self.log('gradient_loss', gradient_ori_loss.item(), on_step=True)
+        # self.log('soft_mask_loss', self.soft_mask_loss.item(), on_step=True)
 
         train_data['mask'] = F.interpolate(sam_pred_mask, (160, 160), mode='bilinear', align_corners=False)
-        self.l_pix = self.diffusion(train_data)
+        l_pix = self.diffusion(train_data)
         b, c, h, w = train_data['HR'].shape
-        self.diffusion_loss = self.l_pix.sum() / int(b * c * h * w)
-        self.log('l_pix_loss', self.diffusion_loss.item(), on_step=True)
+        diffusion_loss = l_pix.sum() / int(b * c * h * w)
+        self.log('l_pix_loss', diffusion_loss.item(), on_step=True)
 
-        return self.diffusion_loss + self.hard_mask_loss + self.soft_mask_loss
+        return diffusion_loss
 
     def test_step(self, test_data):
         filename = test_data['LR_path'][0].split('/')[-1].split('.')[0]
@@ -212,6 +219,7 @@ class sam_shadow(L.LightningModule):
         # Sam adapter input 1024x1024
         sam_input = test_data['sam_SR']
         sam_pred_mask, sam_pred_soft_mask = self.sam(sam_input)
+        sam_pred_mask = torch.sigmoid(sam_pred_mask)
         # diffusion input 256x256
         test_data['mask'] = F.interpolate(sam_pred_mask, (256, 256), mode='bilinear', align_corners=False)
         shadow_removal_sr, diffusion_mask_pred = self.diffusion.super_resolution(test_data['SR'], test_data['mask'], continous=False)
@@ -226,7 +234,7 @@ class sam_shadow(L.LightningModule):
 
         self.log(f'{filename}_PSNR', eval_psnr, prog_bar=True)
         self.log(f'{filename}_SSIM', eval_ssim)
-        save_path = "/home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion/experiments_lightning/sam_shadow_jointTraining_SRD/sam_shadow_jointTraining_SRD_jointTraining_DDP_16/epoch_19/"
+        save_path = "/home/xinrui/projects/ShadowDiffusion/experiments_lightning/fix_sam/fix_sam_version_1/last/"
         # save SR and mask_pred
         if not os.path.exists(save_path):
             os.mkdir(save_path)
@@ -252,7 +260,7 @@ class sam_shadow(L.LightningModule):
         gen_path = '{}_gen.pth'.format(path.ddpm)
         self.diffusion.load_state_dict(torch.load(gen_path), strict=False)
 
-        sam_state_dict = torch.load(path.sam)
+        sam_state_dict = torch.load(path.sam, map_location=self.device)
         self.sam.load_state_dict(sam_state_dict, strict=False)
 
     def configure_optimizers(self):
@@ -310,6 +318,7 @@ def train(args: DictConfig) -> None:
         logger=logger,
         log_every_n_steps=log_every_n_steps,
         strategy=DDPStrategy(gradient_as_bucket_view=True, find_unused_parameters=True)
+        # strategy=DDPStrategy(gradient_as_bucket_view=True)
     )
     trainer.fit(model, data_module)
 

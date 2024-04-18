@@ -12,7 +12,7 @@ def tensor2img(tensor, out_type=np.uint8, min_max=(-1, 1)):
     Input: 4D(B,(3/1),H,W), 3D(C,H,W), or 2D(H,W), any range, RGB channel order
     Output: 3D(H,W,C) or 2D(H,W), [0,255], np.uint8 (default)
     '''
-    tensor = tensor.squeeze().float().cpu().clamp_(*min_max)  # clamp
+    tensor = tensor.squeeze().float().cpu().clone().clamp_(*min_max)  # clamp
     tensor = (tensor - min_max[0]) / \
         (min_max[1] - min_max[0])  # to range [0,1]
     n_dim = tensor.dim()

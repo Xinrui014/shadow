@@ -71,20 +71,19 @@ class MaskDecoder(nn.Module):
         # add another adapter for the mask decoder
         self.soft_mask_decoder_adapter = nn.ModuleList(
             [
-                MLP(transformer_dim, transformer_dim, transformer_dim // 8, 5)
+                MLP(transformer_dim, transformer_dim, transformer_dim // 8, 3)
                 for i in range(self.num_mask_tokens)
             ]
         )
-
-        # initialize the adapter
-        for i in range(self.num_mask_tokens):
-            self.soft_mask_decoder_adapter[i].apply(self._init_weights)
-
-    def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
-            nn.init.xavier_uniform_(m.weight)
-            if m.bias is not None:
-                nn.init.constant_(m.bias, 0)
+    #
+    #     for i in range(self.num_mask_tokens):
+    #         self.soft_mask_decoder_adapter[i].apply(self._init_weights)
+    #
+    # def _init_weights(self, m):
+    #     if isinstance(m, nn.Linear):
+    #         nn.init.xavier_uniform_(m.weight)
+    #         if m.bias is not None:
+    #             nn.init.constant_(m.bias, 0)
 
     def forward(
             self,
