@@ -117,7 +117,7 @@ class LRHRDataset(Dataset):
             return {'HR': img_HR, 'SR': img_SR, 'mask': img_mask, 'Index': index}
 
 class TrainDataset(Dataset):
-    def __init__(self, dataroot, sam_inp_size=1024):
+    def __init__(self, dataroot, sam_inp_size=1024, mask_inp_size=256):
         gt_dir = 'train_C'
         input_dir = 'train_A'
         mask_dir = 'train_B'
@@ -137,7 +137,7 @@ class TrainDataset(Dataset):
                                  std=[0.229, 0.224, 0.225])
         ])
         self.mask_transform = transforms.Compose([
-            transforms.Resize((sam_inp_size, sam_inp_size), interpolation=Image.NEAREST),
+            transforms.Resize((mask_inp_size, mask_inp_size), interpolation=Image.NEAREST),
             transforms.ToTensor(),
         ])
 
@@ -169,7 +169,7 @@ class TrainDataset(Dataset):
                 'sam_SR': sam_img_SR, 'sam_mask': sam_img_mask}
 
 class TestDataset(Dataset):
-    def __init__(self, dataroot, sam_inp_size=1024, data_len=-1):
+    def __init__(self, dataroot, sam_inp_size=1024, mask_inp_size=256, data_len=-1):
         gt_dir = 'test_C'
         input_dir = 'test_A'
         mask_dir = 'test_B'
@@ -190,7 +190,7 @@ class TestDataset(Dataset):
                                  std=[0.229, 0.224, 0.225])
         ])
         self.mask_transform = transforms.Compose([
-            transforms.Resize((sam_inp_size, sam_inp_size), interpolation=Image.NEAREST),
+            transforms.Resize((mask_inp_size, mask_inp_size), interpolation=Image.NEAREST),
             transforms.ToTensor(),
         ])
 

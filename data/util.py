@@ -92,7 +92,7 @@ def transform_augment(img_list, split='val', min_max=(0, 1), patch_size=160):
     img_mask = img_mask.repeat(3, 1, 1)
     imgs[-1] = img_mask
     imgs = torch.stack(imgs, 0)
-    if split == 'train':
+    if split == 'space':
         imgs = random_crop(imgs, patch_size=patch_size)
         imgs = hflip(imgs)
     crop_h, crop_w = imgs.shape[2] % 16, imgs.shape[3] % 16
