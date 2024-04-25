@@ -1,11 +1,12 @@
-name: sam_head_removal_BCE+IOU
-version: version_2_detach
-phase: train
-samshadow_ckpt_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/fix_sam/fix_sam_version_2_256/epoch=19.ckpt
-save_result_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/fix_sam/fix_sam_version_2_256/epoch_19
+name: fix_sam
+version: version_3_hard_mask
+phase: test
+samshadow_ckpt_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/fix_sam/version_3_hard_mask/epoch=119.ckpt
+save_result_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/fix_sam/version_3_hard_mask/119
 
-unfreeze_sam_head: True
+unfreeze_sam_head: False
 detach_sam: True
+diffusion_scale: 1
 
 datasets:
   train:
@@ -58,7 +59,7 @@ sam:
   loss: iou
 
 train:
-  gpu_ids: [2,3]
+  gpu_ids: [0, 1]
   max_epochs: 200
   every_n_epochs: 20
   optimizer:

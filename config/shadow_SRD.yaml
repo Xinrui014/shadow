@@ -1,16 +1,16 @@
-name: train_SRD_diffusion
-version: debug_2
-phase: train
+name: fix_sam
+version: version_4_binary_mask
+phase: test
 ckpt_name: ""
-#state: ddpm # this state means use pre generated SAM mask as input in dataloader, train diffusion
-#state: sam+ddpm # the original state is using gt mask and train SAM->diffusion together(is under coding)
+samshadow_ckpt_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/fix_sam/version_4_binary_mask/epoch=199.ckpt
+save_result_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/fix_sam/version_4_binary_mask/199
 
 datasets:
   train:
     name: SRD_sam_train
     mode: HR
     dataroot: ./dataset/SRD_sam_mask_B/train # use sam mask
-    batch_size: 1
+    batch_size: 16
     num_workers: 8
     use_shuffle: true
   test:
@@ -57,14 +57,14 @@ sam:
 
 train:
   gpu_ids: [2]
-  max_epochs: 1000
-  every_n_epochs: 100
+  max_epochs: 200
+  every_n_epochs: 20
   optimizer:
-    lr: 3e-5
+    lr: 1e-5
 
 test:
   gpu_ids:
-    - 0
+    - 2
 
 
 #  dataroot: /home/xinrui/projects/SAM-Adapter/data/ISTD_Dataset/train

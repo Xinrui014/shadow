@@ -133,6 +133,7 @@ class SamShadow(L.LightningModule):
         super(SamShadow, self).__init__()
         self.args = args
         self.save_model_name = args.name
+        self.automatic_optimization = False
         self.steps_per_epoch = int(steps_per_epoch)
         self.diffusion = shadow_diffusion(args)
         self.optimizer_param = args.train.optimizer
@@ -178,8 +179,12 @@ class SamShadow(L.LightningModule):
     def forward(self, train_data):
         sam_input = train_data['sam_SR']
         sam_pred_mask_, sam_pred_soft_mask = self.sam(sam_input)
-        sam_pred_soft_mask = torch.sigmoid(sam_pred_soft_mask)
-        if self.args.detach_sam:
+
+        ##############################################################
+        # sam_pred_soft_mask = torch.sigmoid(sam_pred_soft_mask)
+        sam_pred_soft_mask = torch.sigmoid(sam_pred_mask_)
+
+        if self.args.unfreeze_sam_head and self.args.detach_sam:
             train_data['mask'] = sam_pred_soft_mask.detach()
         else:
             train_data['mask'] = sam_pred_soft_mask
@@ -193,20 +198,39 @@ class SamShadow(L.LightningModule):
         self.segmentation_loss += _iou_loss(sam_pred_soft_mask, residual_mask)
         laplacian_loss, gradient_ori_loss = soft_mask_loss_metric(sam_pred_soft_mask, train_data['HR'])
         self.soft_mask_loss = 10 * (5 * laplacian_loss + gradient_ori_loss)
+        self.sam_backward_loss = self.segmentation_loss + self.args.diffusion_scale * self.diffusion_loss
+
+        # optimize SAM and diffusion saperately
+        sam_optimizer, diffusion_optimizer = self.optimizers()
+        if self.args.unfreeze_sam_head:
+            self.manual_backward(self.sam_backward_loss, retain_graph=True)
+            sam_optimizer.step()
+            sam_optimizer.zero_grad()
+
+        self.manual_backward(self.diffusion_loss)
+        diffusion_optimizer.step()
+        diffusion_optimizer.zero_grad()
+
 
         self.log('l_pix_loss', self.diffusion_loss.item(), on_step=True)
         self.log('segmentation_loss', self.segmentation_loss.item(), on_step=True)
+        self.log('sam_backward_loss', self.sam_backward_loss, on_step=True)
         self.log('laplacian_loss', laplacian_loss.item(), on_step=True)
         self.log('gradient_loss', gradient_ori_loss.item(), on_step=True)
         self.log('soft_mask_loss', self.soft_mask_loss.item(), on_step=True)
 
-        return {'loss': self.diffusion_loss + self.segmentation_loss, 'soft_mask': sam_pred_soft_mask}
+        return {'loss': self.diffusion_loss + self.segmentation_loss,
+                'soft_mask': sam_pred_soft_mask,
+                'residual_mask': residual_mask}
 
 
     def sample(self, data):
         sam_input = data['sam_SR']
-        _, sam_pred_soft_mask = self.sam(sam_input)
-        sam_pred_soft_mask = torch.sigmoid(sam_pred_soft_mask)
+        sam_pred_mask_, sam_pred_soft_mask = self.sam(sam_input)
+        # sam_pred_soft_mask = torch.sigmoid(sam_pred_soft_mask)
+        ########################
+        sam_pred_soft_mask = torch.sigmoid(sam_pred_mask_)
+
         data['mask'] = sam_pred_soft_mask
         shadow_removal_sr, diffusion_mask_pred = self.diffusion.super_resolution(data['SR'], data['mask'], continous=False)
         return shadow_removal_sr, diffusion_mask_pred, sam_pred_soft_mask
@@ -226,13 +250,14 @@ class SamShadow(L.LightningModule):
         result = self(train_data)
         loss = result['loss']
         sam_pred_soft_mask = result['soft_mask']
+        residual_mask = result['residual_mask']
 
         # print("After training step:")
         # self.print_param_values()
         if self.global_step % 100 == 0:
             self.logger.experiment.add_image('Train/sam_pred_mask', sam_pred_soft_mask[0], self.global_step)
+            self.logger.experiment.add_image('Train/residual_mask', residual_mask[0], self.global_step)
 
-        return loss
 
 
     def validation_step(self, val_data, batch_idx):
@@ -245,8 +270,8 @@ class SamShadow(L.LightningModule):
         log_img = (log_img + 1) / 2
         self.logger.experiment.add_image('Val/Shadow_Removal', log_img, self.global_step)
         self.logger.experiment.add_image('Val/Diffusion_Mask', diffusion_mask_pred[0],self.global_step)
-        self.log('Val/psnr', eval_psnr)
-        self.log('Val/ssim', eval_ssim)
+        self.log('Val/psnr', eval_psnr, sync_dist=True)
+        self.log('Val/ssim', eval_ssim, sync_dist=True)
 
 
     def predict_step(self, test_data):
@@ -267,28 +292,17 @@ class SamShadow(L.LightningModule):
         self.sam.load_state_dict(sam_state_dict, strict=False)
 
     def configure_optimizers(self):
-        # check if the adatper parameter is in self.sam
-        # for name, param in self.sam.named_parameters():
-        #     if "soft_mask_decoder_adapter" in name:
-        #         print("adapter is in optimizer")
+        # param_groups = [
+        #     {'params': self.sam.parameters(), 'lr': 0.0002},
+        #     {'params': self.diffusion.parameters(), 'lr': 1e-05}
+        # ]
+        # optimizer = torch.optim.Adam(param_groups)
 
+        sam_optimizer = torch.optim.Adam(self.sam.parameters(), lr=0.0002)
+        diffusion_optimizer = torch.optim.Adam(self.diffusion.parameters(), lr=1e-05)
 
-        param_groups = [
-            {'params': self.sam.parameters(), 'lr': 0.0002},
-            {'params': self.diffusion.parameters(), 'lr': 1e-05}
-        ]
-        optimizer = torch.optim.Adam(param_groups)
-        # warm_up_steps = self.args.warmup_epochs * self.steps_per_epoch
-        # max_step = self.args.max_epochs * self.steps_per_epoch
-        # scheduler = LinearWarmupCosineAnnealingLR(optimizer, warmup_epochs=warm_up_steps, max_epochs=max_step)
-        # optim_dict = {
-        #     'optimizer': optimizer,
-        #     'lr_scheduler': {
-        #         'scheduler': scheduler,  # The LR scheduler instance (required)
-        #         'interval': 'step',  # The unit of the scheduler's step size
-        #     }
-        # }
-        return optimizer
+        return [sam_optimizer, diffusion_optimizer]
+
 
 # using SAM mask train diffusion
 def train(args: DictConfig) -> None:
@@ -321,10 +335,11 @@ def train(args: DictConfig) -> None:
         precision=16,
         devices=args.train.gpu_ids,
         max_epochs=max_epochs,
-        gradient_clip_val=0.5,
+        # gradient_clip_val=0.5,
         default_root_dir=save_path,
         callbacks=[checkpoint_callback, lr_monitor],
         logger=logger,
+        num_sanity_val_steps=0,
         check_val_every_n_epoch=10,
         log_every_n_steps=log_every_n_steps,
         strategy=DDPStrategy(gradient_as_bucket_view=True)
@@ -385,6 +400,8 @@ def sample(args: DictConfig) -> None:
     print(f'SSIM: {ssim_mean:}')
 
     with open(os.path.join(save_path, 'PSNR_SSIM_list.log'), 'w') as file:
+        file.write(f"PSNR_mean: {psnr_mean}\n")
+        file.write(f"SSIM_mean: {ssim_mean}\n")
         for key, value in PSNR_SSIM_list_with_name:
             file.write(f"{key}: {value}\n")
 
