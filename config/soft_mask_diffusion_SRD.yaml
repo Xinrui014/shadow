@@ -1,6 +1,6 @@
 name: fix_sam
-version: version_3_hard_mask
-phase: test
+version: debug
+phase: train
 samshadow_ckpt_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/fix_sam/version_3_hard_mask/epoch=119.ckpt
 save_result_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/fix_sam/version_3_hard_mask/119
 
@@ -59,7 +59,7 @@ sam:
   loss: iou
 
 train:
-  gpu_ids: [0, 1]
+  gpu_ids: [0]
   max_epochs: 200
   every_n_epochs: 20
   optimizer:

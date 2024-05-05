@@ -1,0 +1,45 @@
+name: tune_sam
+version: lora_rank8_1_debug
+phase: train
+samshadow_ckpt_path: /home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion/experiments_lightning/tune_sam/fix_encoder_version_2_H/epoch=49.ckpt
+save_result_path: /home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion/experiments_lightning/tune_sam/fix_encoder_version_2_H/49
+
+#unfreeze_sam_head: False
+#detach_sam: True
+#diffusion_scale: 1
+
+datasets:
+  train:
+    name: SRD_sam_train
+    mode: HR
+    dataroot: ./dataset/SRD_sam_mask_B/train # use sam mask
+    batch_size: 1
+    num_workers: 8
+    use_shuffle: true
+  test:
+    name: SRD_sam_val
+    mode: LRHR
+    dataroot: ./dataset/SRD_sam_mask_B/test
+    batch_size: 1
+
+train:
+  gpu_ids: [0]
+  max_epochs: 50
+  every_n_epochs: 10
+
+test:
+  gpu_ids: [0]
+
+warmup_epochs: 10
+max_epochs: 200
+
+ckpt_path:
+  'sam_adapter': ./experiments/official_test/SAM_adapter_ckpt/model_epoch_best.pth
+  'ddpm': ./experiments/official_test/checkpoint/SRD_dataset/I2130000_E12080 # two ckpts share same name
+  'SAM': "/home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion/experiments/official_test/SAM_ckpt/sam_vit_h_4b8939.pth"
+
+bbox_path: "/home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion/dataset/SRD_sam_mask_B/train/bounding_boxes_DHAN.yaml"
+test_bbox_path: "/home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion/dataset/SRD_sam_mask_B/test/bounding_boxes_DHAN.yaml"
+model_type: "vit_h"
+sam_rank: 8
+

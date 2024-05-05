@@ -4,6 +4,7 @@ import numpy as np
 import cv2
 from torchvision.utils import make_grid
 from PIL import Image
+import torch
 
 
 def tensor2img(tensor, out_type=np.uint8, min_max=(-1, 1)):
@@ -96,3 +97,44 @@ def calculate_ssim(img1, img2):
             return ssim(np.squeeze(img1), np.squeeze(img2))
     else:
         raise ValueError('Wrong input image dimensions.')
+
+
+
+def calc_ber(y_pred, y_true):
+    batchsize = y_true.shape[0]
+    y_pred, y_true = y_pred.permute(0, 2, 3, 1).squeeze(-1), y_true.permute(0, 2, 3, 1).squeeze(-1)
+    with torch.no_grad():
+        assert y_pred.shape == y_true.shape
+        pos_err, neg_err, ber = 0, 0, 0
+        y_true = y_true.cpu().numpy()
+        y_pred = y_pred.cpu().numpy()
+        for i in range(batchsize):
+            true = y_true[i].flatten()
+            pred = y_pred[i].flatten()
+
+            TP, TN, FP, FN, BER, ACC = get_binary_classification_metrics(pred * 255,
+                                                                         true * 255, 125)
+            pos_err += (1 - TP / (TP + FN)) * 100
+            neg_err += (1 - TN / (TN + FP)) * 100
+
+    return pos_err / batchsize, neg_err / batchsize, (pos_err + neg_err) / 2 / batchsize, np.array(0)
+
+
+def get_binary_classification_metrics(pred, gt, threshold=None):
+    if threshold is not None:
+        gt = (gt > threshold)
+        pred = (pred > threshold)
+    TP = np.logical_and(gt, pred).sum()
+    TN = np.logical_and(np.logical_not(gt), np.logical_not(pred)).sum()
+    FN = np.logical_and(gt, np.logical_not(pred)).sum()
+    FP = np.logical_and(np.logical_not(gt), pred).sum()
+    BER = cal_ber(TN, TP, FN, FP)
+    ACC = cal_acc(TN, TP, FN, FP)
+    return TP, TN, FP, FN, BER, ACC
+
+
+def cal_ber(tn, tp, fn, fp):
+    return 0.5*(fp/(tn+fp) + fn/(fn+tp))
+
+def cal_acc(tn, tp, fn, fp):
+    return (tp + tn) / (tp + tn + fp + fn)
