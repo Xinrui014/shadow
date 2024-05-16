@@ -1,2 +1,6 @@
 
 /.idea
+/dataset
+/experiments_lightning
+/functions
+/shadow_constrain_searching
