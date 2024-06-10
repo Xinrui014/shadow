@@ -5,6 +5,9 @@ import cv2
 from torchvision.utils import make_grid
 from PIL import Image
 import torch
+import torch.nn as nn
+from torch.nn import functional as F
+
 
 
 def tensor2img(tensor, out_type=np.uint8, min_max=(-1, 1)):
@@ -119,7 +122,47 @@ def calc_ber(y_pred, y_true):
 
     return pos_err / batchsize, neg_err / batchsize, (pos_err + neg_err) / 2 / batchsize, np.array(0)
 
+def compute_errors(gt, pred):
+    """Compute metrics for 'pred' compared to 'gt'
 
+    Args:
+        gt (numpy.ndarray): Ground truth values
+        pred (numpy.ndarray): Predicted values
+
+        gt.shape should be equal to pred.shape
+
+    Returns:
+        dict: Dictionary containing the following metrics:
+            'a1': Delta1 accuracy: Fraction of pixels that are within a scale factor of 1.25
+            'a2': Delta2 accuracy: Fraction of pixels that are within a scale factor of 1.25^2
+            'a3': Delta3 accuracy: Fraction of pixels that are within a scale factor of 1.25^3
+            'abs_rel': Absolute relative error
+            'rmse': Root mean squared error
+            'log_10': Absolute log10 error
+            'sq_rel': Squared relative error
+            'rmse_log': Root mean squared error on the log scale
+            'silog': Scale invariant log error
+    """
+    thresh = np.maximum((gt / pred), (pred / gt))
+    a1 = (thresh < 1.25).mean()
+    a2 = (thresh < 1.25 ** 2).mean()
+    a3 = (thresh < 1.25 ** 3).mean()
+
+    abs_rel = np.mean(np.abs(gt - pred) / gt)
+    sq_rel = np.mean(((gt - pred) ** 2) / gt)
+
+    rmse = (gt - pred) ** 2
+    rmse = np.sqrt(rmse.mean())
+
+    rmse_log = (np.log(gt) - np.log(pred)) ** 2
+    rmse_log = np.sqrt(rmse_log.mean())
+
+    err = np.log(pred) - np.log(gt)
+    silog = np.sqrt(np.mean(err ** 2) - np.mean(err) ** 2) * 100
+
+    log_10 = (np.abs(np.log10(gt) - np.log10(pred))).mean()
+    return dict(a1=a1, a2=a2, a3=a3, abs_rel=abs_rel, rmse=rmse, log_10=log_10, rmse_log=rmse_log,
+                silog=silog, sq_rel=sq_rel)
 def get_binary_classification_metrics(pred, gt, threshold=None):
     if threshold is not None:
         gt = (gt > threshold)
@@ -138,3 +181,27 @@ def cal_ber(tn, tp, fn, fp):
 
 def cal_acc(tn, tp, fn, fp):
     return (tp + tn) / (tp + tn + fp + fn)
+
+class Get_gradient_nopadding(nn.Module):
+    def __init__(self):
+        super(Get_gradient_nopadding, self).__init__()
+        kernel_v = [[0, -1, 0],
+                    [0, 0, 0],
+                    [0, 1, 0]]
+        kernel_h = [[0, 0, 0],
+                    [-1, 0, 1],
+                    [0, 0, 0]]
+        kernel_h = torch.FloatTensor(kernel_h).unsqueeze(0).unsqueeze(0)
+        kernel_v = torch.FloatTensor(kernel_v).unsqueeze(0).unsqueeze(0)
+        self.weight_h = nn.Parameter(data = kernel_h, requires_grad = False)
+        self.weight_v = nn.Parameter(data = kernel_v, requires_grad = False)
+
+    def forward(self, x):
+        x0 = x[:, 0]
+        x0_v = F.conv2d(x0.unsqueeze(1), self.weight_v, padding = 1)
+        x0_h = F.conv2d(x0.unsqueeze(1), self.weight_h, padding = 1)
+
+        x0 = torch.sqrt(torch.pow(x0_v, 2) + torch.pow(x0_h, 2) + 1e-6)
+
+        x = x0
+        return x

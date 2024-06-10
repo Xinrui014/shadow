@@ -108,10 +108,17 @@ class ImageEncoderViT(nn.Module):
         if self.pos_embed is not None:
             x = x + self.pos_embed
 
-        for blk in self.blocks:
-            x = blk(x)
+        # n = 4
+        # output, total_block_len = [], len(self.blocks)
+        # blocks_to_take = range(total_block_len - n, total_block_len) if isinstance(n, int) else n
 
+        for i, blk in enumerate(self.blocks):
+            x = blk(x)
+            # if i in blocks_to_take:
+            #     output.append(x)
+        a = x.permute(0, 2, 3, 1)
         x = self.neck(x.permute(0, 3, 1, 2))
+        # output_feature = output
 
         return x
 

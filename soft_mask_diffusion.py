@@ -2,6 +2,7 @@ import os
 import cv2
 import numpy as np
 import torch
+import torch.nn as nn
 from PIL import Image
 import hydra
 import torch
@@ -12,15 +13,17 @@ from torch.utils.data import DataLoader
 from torchvision.utils import save_image
 from model.sam_adapter.sam_adapt import SAM
 import core.metrics as Metrics
-from data.LRHR_dataset import LRHRDataset, TrainDataset, TestDataset
+from data.LRHR_dataset import LRHRDataset, TrainDataset, TestDataset, TuneSAM
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.strategies import DDPStrategy
-from pl_bolts.optimizers.lr_scheduler import LinearWarmupCosineAnnealingLR
+# from pl_bolts.optimizers.lr_scheduler import LinearWarmupCosineAnnealingLR
 from omegaconf import DictConfig
 import model.networks as networks
 from model.sam_adapter.iou_loss import IOU
 from lightning.pytorch.loggers import TensorBoardLogger
+from model.segment_anything.sam_lora import LoRA_Sam
+from model.segment_anything import sam_model_registry
 
 
 def apply_low_pass_filter(mask: object, kernel_size: object = 3) -> object:
@@ -45,6 +48,35 @@ def _iou_loss(pred, target):
 
     return iou.mean()
 
+class SAM_with_bbox(nn.Module):
+    def __init__(
+            self,
+            image_encoder,
+            mask_decoder,
+            prompt_encoder,
+    ):
+        super(SAM_with_bbox, self).__init__()
+        self.image_encoder = image_encoder
+        self.mask_decoder = mask_decoder
+        self.prompt_encoder = prompt_encoder
+
+    def forward(self, image, bbox):
+        self.features = self.image_encoder(image)
+        sparse_embeddings, dense_embeddings = self.prompt_encoder(
+            points=None,
+            boxes=bbox,
+            # boxes=None,
+            masks=None,
+        )
+        low_res_masks, iou_predictions = self.mask_decoder(
+            image_embeddings = self.features,
+            image_pe=self.prompt_encoder.get_dense_pe(),
+            sparse_prompt_embeddings=sparse_embeddings,
+            dense_prompt_embeddings=dense_embeddings,
+            multimask_output=False
+        )
+
+        return low_res_masks # 256x256
 
 class SamShadowDataModule(L.LightningDataModule):
     def __init__(self, args):
@@ -55,10 +87,10 @@ class SamShadowDataModule(L.LightningDataModule):
 
     def setup(self, stage="fit"):
         if stage == "fit":
-            self.train_data = TrainDataset(self.args.datasets.train.dataroot, 1024)
-            self.val_data = TestDataset(self.args.datasets.test.dataroot, 1024, data_len=3)
+            self.train_data = TuneSAM(self.args.datasets.train.dataroot, self.args.datasets.train.gt_mask_dir, self.args.bbox_path)
+            self.val_data = TuneSAM(self.args.datasets.train.dataroot, self.args.datasets.train.gt_mask_dir, self.args.bbox_path, data_len=self.args.datasets.train.val_data_len)
         elif stage == "test":
-            self.test_data = TestDataset(self.args.datasets.test.dataroot, 1024)
+            self.test_data = TuneSAM(self.args.datasets.test.dataroot, self.args.datasets.test.gt_mask_dir, self.args.test_bbox_path, data_len=self.args.datasets.test.data_len)
 
     def train_dataloader(self):
         dataloader = DataLoader(self.train_data,
@@ -133,38 +165,37 @@ class SamShadow(L.LightningModule):
         super(SamShadow, self).__init__()
         self.args = args
         self.save_model_name = args.name
-        self.automatic_optimization = False
+        # automatic optimization
+        self.automatic_optimization = True
         self.steps_per_epoch = int(steps_per_epoch)
         self.diffusion = shadow_diffusion(args)
         self.optimizer_param = args.train.optimizer
         self.diffusion.set_loss()
-        self.sam = sam_adapter(args.sam.input_size, args.sam.loss)
-        self.criterionBCE = torch.nn.BCEWithLogitsLoss()
-        self.criterionIOU = IOU()
+        # self.sam = sam_adapter(args.sam.input_size, args.sam.loss)
+        self.sam_model = sam_model_registry[args.model_type](checkpoint=path.SAM)
+        self.sam = SAM_with_bbox(image_encoder=self.sam_model.image_encoder,
+                                 prompt_encoder=self.sam_model.prompt_encoder,
+                                 mask_decoder=self.sam_model.mask_decoder)
+        self.sam_lora = LoRA_Sam(self.sam, args.sam_rank)
+        self.lora = self.sam_lora.sam
+
+        self.MSEloss = torch.nn.MSELoss()
         self.diffusion_loss = []
         self.soft_mask_loss = []
-        self.soft_mask_loss = []
+        self.mse_loss = []
 
         if args.phase == 'train':
             self.diffusion.set_new_noise_schedule(args['model']['beta_schedule']['train'])
         if path is not None:
             self.load_pretrained_models(path)
-            if args.phase == 'train':
-                # optimizer
-                opt_path = '{}_opt.pth'.format(path.ddpm)
-                opt = torch.load(opt_path, map_location=self.device)
-                self.begin_step = opt['iter']
-                self.begin_epoch = opt['epoch']
-            # transfer output_hypernetworks_mlps parameter to soft_mask_decoder_adapter
-            for i in range(self.sam.mask_decoder.num_mask_tokens):
-                self.sam.mask_decoder.soft_mask_decoder_adapter[i].load_state_dict(
-                    self.sam.mask_decoder.output_hypernetworks_mlps[i].state_dict()
-                )
-        self.save_hyperparameters()
-        self.freeze_parameters(self.sam.parameters())
 
-        if args.unfreeze_sam_head:
-            self.unfreeze_parameters(self.sam.mask_decoder.soft_mask_decoder_adapter.parameters())
+        self.save_hyperparameters()
+        # for name, param in self.lora.named_parameters():
+        #     if param.requires_grad:
+        #         print(name)
+
+        self.freeze_parameters(self.lora.parameters())
+
 
     @staticmethod
     def freeze_parameters(params):
@@ -177,63 +208,60 @@ class SamShadow(L.LightningModule):
             param.requires_grad = True
 
     def forward(self, train_data):
+
         sam_input = train_data['sam_SR']
-        sam_pred_mask_, sam_pred_soft_mask = self.sam(sam_input)
+        bbox = train_data['bbox']
+        pred_mask = self.lora(sam_input, bbox)
+        pred_mask = torch.sigmoid(pred_mask)
+        train_data['mask'] = pred_mask.detach()
 
-        ##############################################################
-        # sam_pred_soft_mask = torch.sigmoid(sam_pred_soft_mask)
-        sam_pred_soft_mask = torch.sigmoid(sam_pred_mask_)
-
-        if self.args.unfreeze_sam_head and self.args.detach_sam:
-            train_data['mask'] = sam_pred_soft_mask.detach()
-        else:
-            train_data['mask'] = sam_pred_soft_mask
+        # if self.args.freeze_sam_lora and self.args.detach_sam:
+        #     train_data['mask'] = pred_mask.detach()
+        # else:
+        #     train_data['mask'] = pred_mask
         l_pix = self.diffusion(train_data)
         b, c, h, w = train_data['HR'].shape
         self.diffusion_loss = l_pix.sum() / int(b * c * h * w)
-        residual = (train_data['HR'] + 1) / 2 - (train_data['SR'] + 1) / 2
-        residual = torch.mean(residual, dim=1, keepdim=True)
-        residual_mask = torch.where(residual < 0.05, torch.zeros_like(residual), torch.ones_like(residual))
-        self.segmentation_loss = self.criterionBCE(sam_pred_soft_mask, residual_mask)
-        self.segmentation_loss += _iou_loss(sam_pred_soft_mask, residual_mask)
-        laplacian_loss, gradient_ori_loss = soft_mask_loss_metric(sam_pred_soft_mask, train_data['HR'])
-        self.soft_mask_loss = 10 * (5 * laplacian_loss + gradient_ori_loss)
-        self.sam_backward_loss = self.segmentation_loss + self.args.diffusion_scale * self.diffusion_loss
+        residual_mask = train_data['sam_mask']
+        # self.mse_loss = self.MSEloss(pred_mask, residual_mask)
+        # self.segmentation_loss += _iou_loss(sam_pred_soft_mask, residual_mask)
+        # laplacian_loss, gradient_ori_loss = soft_mask_loss_metric(sam_pred_soft_mask, train_data['HR'])
+        # self.soft_mask_loss = 10 * (5 * laplacian_loss + gradient_ori_loss)
+        # self.sam_backward_loss = self.mse_loss + self.args.diffusion_scale * self.diffusion_loss
 
         # optimize SAM and diffusion saperately
-        sam_optimizer, diffusion_optimizer = self.optimizers()
-        if self.args.unfreeze_sam_head:
-            self.manual_backward(self.sam_backward_loss, retain_graph=True)
-            sam_optimizer.step()
-            sam_optimizer.zero_grad()
-
-        self.manual_backward(self.diffusion_loss)
-        diffusion_optimizer.step()
-        diffusion_optimizer.zero_grad()
+        # sam_optimizer, diffusion_optimizer = self.optimizers()
+        # if self.args.unfreeze_sam_head:
+        #     self.manual_backward(self.sam_backward_loss, retain_graph=True)
+        #     sam_optimizer.step()
+        #     sam_optimizer.zero_grad()
+        #
+        # self.manual_backward(self.diffusion_loss)
+        # diffusion_optimizer.step()
+        # diffusion_optimizer.zero_grad()
 
 
         self.log('l_pix_loss', self.diffusion_loss.item(), on_step=True)
-        self.log('segmentation_loss', self.segmentation_loss.item(), on_step=True)
-        self.log('sam_backward_loss', self.sam_backward_loss, on_step=True)
-        self.log('laplacian_loss', laplacian_loss.item(), on_step=True)
-        self.log('gradient_loss', gradient_ori_loss.item(), on_step=True)
-        self.log('soft_mask_loss', self.soft_mask_loss.item(), on_step=True)
+        # self.log('mse_loss', self.mse_loss.item(), on_step=True)
+        # self.log('sam_backward_loss', self.sam_backward_loss, on_step=True)
+        # self.log('laplacian_loss', laplacian_loss.item(), on_step=True)
+        # self.log('gradient_loss', gradient_ori_loss.item(), on_step=True)
+        # self.log('soft_mask_loss', self.soft_mask_loss.item(), on_step=True)
 
-        return {'loss': self.diffusion_loss + self.segmentation_loss,
-                'soft_mask': sam_pred_soft_mask,
+        return {'loss': self.diffusion_loss,
+                'pred_mask': pred_mask,
                 'residual_mask': residual_mask}
 
 
     def sample(self, data):
         sam_input = data['sam_SR']
-        sam_pred_mask_, sam_pred_soft_mask = self.sam(sam_input)
-        # sam_pred_soft_mask = torch.sigmoid(sam_pred_soft_mask)
-        ########################
-        sam_pred_soft_mask = torch.sigmoid(sam_pred_mask_)
+        bbox = data['bbox']
+        pred_mask = self.lora(sam_input, bbox)
+        pred_mask = torch.sigmoid(pred_mask)
 
-        data['mask'] = sam_pred_soft_mask
+        data['mask'] = pred_mask
         shadow_removal_sr, diffusion_mask_pred = self.diffusion.super_resolution(data['SR'], data['mask'], continous=False)
-        return shadow_removal_sr, diffusion_mask_pred, sam_pred_soft_mask
+        return shadow_removal_sr, diffusion_mask_pred, pred_mask
 
     def print_param_values(self):
         print("SAM parameters:")
@@ -249,14 +277,21 @@ class SamShadow(L.LightningModule):
     def training_step(self, train_data, batch_idx):
         result = self(train_data)
         loss = result['loss']
-        sam_pred_soft_mask = result['soft_mask']
+        pred_mask = result['pred_mask']
         residual_mask = result['residual_mask']
+        filename = train_data['filename']
+        log_img = train_data['SR'][0].clamp_(-1, 1)
+        lr_img = (log_img + 1) / 2
 
         # print("After training step:")
         # self.print_param_values()
         if self.global_step % 100 == 0:
-            self.logger.experiment.add_image('Train/sam_pred_mask', sam_pred_soft_mask[0], self.global_step)
+            self.logger.experiment.add_image('Train/sam_pred_mask', pred_mask[0], self.global_step)
             self.logger.experiment.add_image('Train/residual_mask', residual_mask[0], self.global_step)
+            self.logger.experiment.add_image('Train/lr_image', lr_img, self.global_step)
+            self.logger.experiment.add_text('Train/filename_sam_pred_mask', filename[0], self.global_step)
+
+        return loss
 
 
 
@@ -288,8 +323,16 @@ class SamShadow(L.LightningModule):
         gen_path = '{}_gen.pth'.format(path.ddpm)
         self.diffusion.load_state_dict(torch.load(gen_path), strict=False)
 
-        sam_state_dict = torch.load(path.sam, map_location=self.device)
-        self.sam.load_state_dict(sam_state_dict, strict=False)
+        sam_state_dict = torch.load(path.lora_sam, map_location=self.device)
+        lora_state_dict = {}
+
+        for key, value in sam_state_dict['state_dict'].items():
+            if key.startswith('lora.'):
+                lora_key = key.replace('lora.', '')
+                lora_state_dict[lora_key] = value
+
+        self.lora.load_state_dict(lora_state_dict, strict=False)
+
 
     def configure_optimizers(self):
         # param_groups = [
@@ -299,9 +342,10 @@ class SamShadow(L.LightningModule):
         # optimizer = torch.optim.Adam(param_groups)
 
         sam_optimizer = torch.optim.Adam(self.sam.parameters(), lr=0.0002)
-        diffusion_optimizer = torch.optim.Adam(self.diffusion.parameters(), lr=1e-05)
+        diffusion_optimizer = torch.optim.Adam(self.diffusion.parameters(), lr=self.args.train.optimizer.lr)
 
-        return [sam_optimizer, diffusion_optimizer]
+        # return [sam_optimizer, diffusion_optimizer]
+        return diffusion_optimizer
 
 
 # using SAM mask train diffusion
@@ -320,12 +364,14 @@ def train(args: DictConfig) -> None:
     save_every_n_epochs = args.train.every_n_epochs
     log_every_n_steps = 1
     log_every_n_epochs = 1
+    accumulate_grad_batches = args.train.accumulate_grad_batches
 
     save_path = f"./experiments_lightning/{save_model_name}/{args.version}"
     lr_monitor = LearningRateMonitor(logging_interval='step')
     checkpoint_callback = ModelCheckpoint(
         dirpath=save_path,
         filename='{epoch}',
+        # save_on_train_epoch_end=True
         save_top_k=-1,
         every_n_epochs=save_every_n_epochs,  # Save every 20 epochs
         save_last=True,  # Save the last model as well
@@ -339,9 +385,11 @@ def train(args: DictConfig) -> None:
         default_root_dir=save_path,
         callbacks=[checkpoint_callback, lr_monitor],
         logger=logger,
-        num_sanity_val_steps=0,
-        check_val_every_n_epoch=10,
+        num_sanity_val_steps=1,
+        check_val_every_n_epoch=20,
         log_every_n_steps=log_every_n_steps,
+        accumulate_grad_batches=accumulate_grad_batches,  # mini batch size is 4 so the overall batchsize is 16
+        # strategy=DDPStrategy(gradient_as_bucket_view=True, find_unused_parameters=True),
         strategy=DDPStrategy(gradient_as_bucket_view=True)
     )
     trainer.fit(model, data_module)

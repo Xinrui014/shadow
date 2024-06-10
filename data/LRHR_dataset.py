@@ -222,26 +222,28 @@ class TestDataset(Dataset):
                 'sam_SR': sam_img_SR, 'sam_mask': sam_img_mask}
 
 class TuneSAM(Dataset):
-    def __init__(self, dataroot, yaml_path, data_len=-1):
+    def __init__(self, dataroot, gt_mask_dir, yaml_path, data_len=-1):
         self.data_len = data_len
 
         self.phase = dataroot.split('/')[-1]
         if self.phase == 'train':
             gt_dir = 'train_C'
             input_dir = 'train_A'
-            mask_dir = 'train_B'
+            mask_dir = gt_mask_dir
+
         elif self.phase == 'test':
             gt_dir = 'test_C'
             input_dir = 'test_A'
-            mask_dir = 'test_B'
+            mask_dir = gt_mask_dir
 
         clean_files = sorted(os.listdir(os.path.join(dataroot, gt_dir)))
         noisy_files = sorted(os.listdir(os.path.join(dataroot, input_dir)))
-        mask_files = sorted(os.listdir(os.path.join(dataroot, mask_dir)))
+        mask_files = sorted(os.listdir(mask_dir))
+        # mask_files = sorted(os.listdir(os.path.join(dataroot, mask_dir)))
 
         self.hr_path = [os.path.join(dataroot, gt_dir, x) for x in clean_files]
         self.sr_path = [os.path.join(dataroot, input_dir, x) for x in noisy_files]
-        self.mask_path = [os.path.join(dataroot, mask_dir, x) for x in mask_files]
+        self.mask_path = [os.path.join(mask_dir, x) for x in mask_files]
 
         self.img_transform = transforms.Compose([
             transforms.Resize((1024, 1024)),
@@ -250,7 +252,7 @@ class TuneSAM(Dataset):
                                  std=[0.229, 0.224, 0.225])
         ])
         self.mask_transform = transforms.Compose([
-            transforms.Resize((256, 256), interpolation=Image.NEAREST),
+            transforms.Resize((256, 256), interpolation=Image.BICUBIC),
             transforms.ToTensor(),
         ])
 
@@ -276,7 +278,7 @@ class TuneSAM(Dataset):
         hr_name = hr_name.replace('_A', '_C')
 
         img_HR_original = Image.open(hr_name).convert("RGB")
-        img_mask_original = Image.open(self.mask_path[index]).convert("1")
+        img_mask_original = Image.open(self.mask_path[index]).convert("L")
         [shadow_img_SR, shadow_img_HR, shadow_img_mask] = Util.transform_augment([img_SR_original, img_HR_original, img_mask_original], split="train", min_max=(-1, 1))
 
         # sam input and sam mask
