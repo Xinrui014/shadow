@@ -296,5 +296,5 @@ class TuneSAM(Dataset):
 
         return {'HR': shadow_img_HR, 'SR': shadow_img_SR, 'mask': shadow_img_mask,
                 'Index': index, 'LR_path': self.sr_path[index],
-                'sam_SR': sam_img_SR, 'sam_mask': sam_img_mask,
+                'sam_SR': sam_img_SR, 'sam_mask': sam_img_mask, #sam gt mask, division mask
                 'bbox': bbox, 'filename': filename,}

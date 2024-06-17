@@ -48,6 +48,63 @@ def _iou_loss(pred, target):
 
     return iou.mean()
 
+
+def total_variation_loss(img, beta=1.0):
+    """
+    Compute the Total Variation Loss.
+    :param img: Tensor of shape (B, C, H, W)
+    :param beta: TV loss hyperparameter
+    :return: Scalar tensor representing the TV loss
+    """
+    batch_size, channel, height, width = img.size()
+    tv_h = torch.pow(img[:, :, 1:, :] - img[:, :, :-1, :], 2).sum()
+    tv_w = torch.pow(img[:, :, :, 1:] - img[:, :, :, :-1], 2).sum()
+    return beta * (tv_h + tv_w) / (batch_size * channel * height * width)
+
+
+def contour_gradient_penalty_loss(img):
+    gray_tensor = img
+    penumbra_area = ((gray_tensor > 50./255) & (gray_tensor < 220./255)).float()
+    # penumbra = penumbra_area.cpu().numpy()
+
+    indices = torch.nonzero(penumbra_area.squeeze())
+    if len(indices) > 0:
+        c_mean = torch.mean(indices.float(), dim=0)
+        cX, cY = int(c_mean[1].item()), int(c_mean[0].item())
+    else:
+        cX, cY = 0, 0
+
+    sobelx = F.conv2d(gray_tensor,
+                      torch.tensor([[[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]]).unsqueeze(1).float().to(gray_tensor.device),
+                      padding=1)
+    sobely = F.conv2d(gray_tensor,
+                      torch.tensor([[[-1, -2, -1], [0, 0, 0], [1, 2, 1]]]).unsqueeze(1).float().to(gray_tensor.device),
+                      padding=1)
+    sobelx = sobelx * penumbra_area
+    sobely = sobely * penumbra_area
+    batch_size, channel, height, width = gray_tensor.size()
+    x_coords = torch.arange(width).unsqueeze(0).repeat(height, 1).to(gray_tensor.device)
+    y_coords = torch.arange(height).unsqueeze(1).repeat(1, width).to(gray_tensor.device)
+    weight_map_x = torch.ones((height, width)).to(sobelx.device)
+    weight_map_y = torch.ones((height, width)).to(sobely.device)
+    # Quadrant
+    weight_map_x = weight_map_x * (x_coords < cX).float() * -2 + 1  # -1 for left, 1 for right
+    weight_map_y = weight_map_y * (y_coords < cY).float() * -2 + 1  # -1 for top, 1 for bottom
+    mod_sobelx = sobelx * weight_map_x.unsqueeze(0).unsqueeze(0)
+    mod_sobely = sobely * weight_map_y.unsqueeze(0).unsqueeze(0)
+    num_pixels = penumbra_area.sum()
+    smooth = 1e-7
+    # orientation_loss = (torch.sum(torch.clamp(mod_sobelx, 0)) + torch.sum(torch.clamp(mod_sobely, 0)) + smooth) / (
+    #         2 * num_pixels + 100 * smooth)
+
+    positive_mod_sobelx = F.relu(mod_sobelx)
+    positive_mod_sobely = F.relu(mod_sobely)
+    orientation_loss = (positive_mod_sobelx.sum() + positive_mod_sobely.sum() + smooth) / (
+                2 * num_pixels + 10 * smooth)
+
+    return orientation_loss
+
+
 class SAM_with_bbox(nn.Module):
     def __init__(
             self,
@@ -180,9 +237,11 @@ class SamShadow(L.LightningModule):
         self.lora = self.sam_lora.sam
 
         self.MSEloss = torch.nn.MSELoss()
+        self.loss = []
         self.diffusion_loss = []
-        self.soft_mask_loss = []
         self.mse_loss = []
+        self.contour_gradient_loss = []
+        self.tv_loss = []
 
         if args.phase == 'train':
             self.diffusion.set_new_noise_schedule(args['model']['beta_schedule']['train'])
@@ -194,7 +253,9 @@ class SamShadow(L.LightningModule):
         #     if param.requires_grad:
         #         print(name)
 
+        # keep lora parameters on training
         self.freeze_parameters(self.lora.parameters())
+        # self.freeze_parameters(self.lora.prompt_encoder.parameters())
 
 
     @staticmethod
@@ -208,26 +269,35 @@ class SamShadow(L.LightningModule):
             param.requires_grad = True
 
     def forward(self, train_data):
-
+        # SAM lora
         sam_input = train_data['sam_SR']
         bbox = train_data['bbox']
         pred_mask = self.lora(sam_input, bbox)
         pred_mask = torch.sigmoid(pred_mask)
-        train_data['mask'] = pred_mask.detach()
+        division_mask = train_data['sam_mask']
+        # self.mse_loss = self.MSEloss(pred_mask, division_mask)
+        # self.log('Loss/MSEloss', self.mse_loss.item(), on_step=True)
+        # self.contour_gradient_loss = contour_gradient_penalty_loss(pred_mask)
+        # self.log('Loss/contour_gradient_loss', self.contour_gradient_loss.item(), on_step=True)
+        # self.tv_loss = total_variation_loss(pred_mask, beta=self.args.tv_loss_beta)
+        # self.log('Loss/TVloss', self.tv_loss.item(), on_step=True)
 
-        # if self.args.freeze_sam_lora and self.args.detach_sam:
-        #     train_data['mask'] = pred_mask.detach()
-        # else:
-        #     train_data['mask'] = pred_mask
+        # ShadowDiffusion
+        train_data['mask'] = pred_mask
         l_pix = self.diffusion(train_data)
         b, c, h, w = train_data['HR'].shape
         self.diffusion_loss = l_pix.sum() / int(b * c * h * w)
-        residual_mask = train_data['sam_mask']
-        # self.mse_loss = self.MSEloss(pred_mask, residual_mask)
-        # self.segmentation_loss += _iou_loss(sam_pred_soft_mask, residual_mask)
-        # laplacian_loss, gradient_ori_loss = soft_mask_loss_metric(sam_pred_soft_mask, train_data['HR'])
-        # self.soft_mask_loss = 10 * (5 * laplacian_loss + gradient_ori_loss)
-        # self.sam_backward_loss = self.mse_loss + self.args.diffusion_scale * self.diffusion_loss
+        self.log('l_pix_loss', self.diffusion_loss.item(), on_step=True)
+        self.loss = self.diffusion_loss
+
+        # if self.args.loss_type == 'mse':
+        #     self.loss = self.mse_loss
+        # if self.args.loss_type == 'mse+tv':
+        #     self.loss = self.mse_loss + self.tv_loss
+        # if self.args.loss_type == 'mse+constrain':
+        #     self.loss = self.mse_loss + self.args.grad_loss_weight * self.contour_gradient_loss
+        #
+        # self.loss = self.loss + self.diffusion_loss
 
         # optimize SAM and diffusion saperately
         # sam_optimizer, diffusion_optimizer = self.optimizers()
@@ -241,16 +311,9 @@ class SamShadow(L.LightningModule):
         # diffusion_optimizer.zero_grad()
 
 
-        self.log('l_pix_loss', self.diffusion_loss.item(), on_step=True)
-        # self.log('mse_loss', self.mse_loss.item(), on_step=True)
-        # self.log('sam_backward_loss', self.sam_backward_loss, on_step=True)
-        # self.log('laplacian_loss', laplacian_loss.item(), on_step=True)
-        # self.log('gradient_loss', gradient_ori_loss.item(), on_step=True)
-        # self.log('soft_mask_loss', self.soft_mask_loss.item(), on_step=True)
-
-        return {'loss': self.diffusion_loss,
+        return {'loss': self.loss,
                 'pred_mask': pred_mask,
-                'residual_mask': residual_mask}
+                'residual_mask': division_mask}
 
 
     def sample(self, data):
@@ -260,6 +323,7 @@ class SamShadow(L.LightningModule):
         pred_mask = torch.sigmoid(pred_mask)
 
         data['mask'] = pred_mask
+        # pred_mask = data['mask']
         shadow_removal_sr, diffusion_mask_pred = self.diffusion.super_resolution(data['SR'], data['mask'], continous=False)
         return shadow_removal_sr, diffusion_mask_pred, pred_mask
 
@@ -304,7 +368,7 @@ class SamShadow(L.LightningModule):
         log_img = shadow_removal_sr[0].clamp_(-1, 1)
         log_img = (log_img + 1) / 2
         self.logger.experiment.add_image('Val/Shadow_Removal', log_img, self.global_step)
-        self.logger.experiment.add_image('Val/Diffusion_Mask', diffusion_mask_pred[0],self.global_step)
+        self.logger.experiment.add_image('Val/gt_image', (val_data['HR'][0]+1)/2,self.global_step)
         self.log('Val/psnr', eval_psnr, sync_dist=True)
         self.log('Val/ssim', eval_ssim, sync_dist=True)
 
@@ -385,12 +449,13 @@ def train(args: DictConfig) -> None:
         default_root_dir=save_path,
         callbacks=[checkpoint_callback, lr_monitor],
         logger=logger,
-        num_sanity_val_steps=1,
+        num_sanity_val_steps=2,
         check_val_every_n_epoch=20,
         log_every_n_steps=log_every_n_steps,
         accumulate_grad_batches=accumulate_grad_batches,  # mini batch size is 4 so the overall batchsize is 16
-        # strategy=DDPStrategy(gradient_as_bucket_view=True, find_unused_parameters=True),
-        strategy=DDPStrategy(gradient_as_bucket_view=True)
+        strategy=DDPStrategy(gradient_as_bucket_view=True, find_unused_parameters=True),
+        # strategy=DDPStrategy(find_unused_parameters=True)
+        # strategy=DDPStrategy(gradient_as_bucket_view=True)
     )
     trainer.fit(model, data_module)
 
@@ -422,25 +487,25 @@ def sample(args: DictConfig) -> None:
         PSNR.append(eval_psnr)
         SSIM.append(eval_ssim)
         # Save SR image
-        sr_path = os.path.join(save_path, f'{filename}_sr.png')
-        res = Metrics.tensor2img(shadow_removal_sr)
-        sr_img = Image.fromarray(res)
-        sr_img.save(sr_path)
-        # Save HR image
-        hr_path = os.path.join(save_path, f'{filename}_hr.png')
-        hr_img = Metrics.tensor2img(gt_image)
-        hr_img = Image.fromarray(hr_img)
-        hr_img.save(hr_path)
-        # Save mask
-        soft_mask = sam_pred_soft_mask.squeeze().cpu().numpy() * 255
-        soft_mask_path = os.path.join(save_path, f'{filename}_soft_mask.png')
-        soft_mask_img = Image.fromarray(soft_mask.astype(np.uint8))
-        soft_mask_img.save(soft_mask_path)
-
-        mask = diffusion_mask_pred.squeeze().cpu().numpy() * 255
-        mask_path = os.path.join(save_path, f'{filename}_diffusion_mask.png')
-        mask_img = Image.fromarray(mask.astype(np.uint8))
-        mask_img.save(mask_path)
+        # sr_path = os.path.join(save_path, f'{filename}_sr.png')
+        # res = Metrics.tensor2img(shadow_removal_sr)
+        # sr_img = Image.fromarray(res)
+        # sr_img.save(sr_path)
+        # # Save HR image
+        # hr_path = os.path.join(save_path, f'{filename}_hr.png')
+        # hr_img = Metrics.tensor2img(gt_image)
+        # hr_img = Image.fromarray(hr_img)
+        # hr_img.save(hr_path)
+        # # Save mask
+        # soft_mask = sam_pred_soft_mask.squeeze().cpu().numpy() * 255
+        # soft_mask_path = os.path.join(save_path, f'{filename}_soft_mask.png')
+        # soft_mask_img = Image.fromarray(soft_mask.astype(np.uint8))
+        # soft_mask_img.save(soft_mask_path)
+        #
+        # mask = diffusion_mask_pred.squeeze().cpu().numpy() * 255
+        # mask_path = os.path.join(save_path, f'{filename}_diffusion_mask.png')
+        # mask_img = Image.fromarray(mask.astype(np.uint8))
+        # mask_img.save(mask_path)
 
     psnr_mean = np.mean(PSNR)
     ssim_mean = np.mean(SSIM)

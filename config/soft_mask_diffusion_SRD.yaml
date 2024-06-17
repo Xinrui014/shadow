@@ -1,12 +1,13 @@
 name: tune_sam+diffusion
-version: lora_sam_mse_1tvloss_5e-1gradloss_version_5
-phase: test
-samshadow_ckpt_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/tune_sam+diffusion/lora_sam_mse_1tvloss_5e-1gradloss_version_5/epoch=399.ckpt
-save_result_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/tune_sam+diffusion/lora_sam_mse_1tvloss_5e-1gradloss_version_5/399
+version: lora_sam_mse_1tvloss_1e-1contGradloss_1e-5_version_9_1
+phase: train
+samshadow_ckpt_path: ./
+save_result_path: ./
 
-unfreeze_sam_head: False
-detach_sam: True
-diffusion_scale: 1
+#tv_loss_beta: 1
+#grad_loss_weight: 0.1
+#loss_type: mse
+
 
 datasets:
   train:
@@ -14,7 +15,7 @@ datasets:
     mode: HR
     dataroot: ./dataset/SRD_sam_mask_B/train
     gt_mask_dir: ./dataset/SRD_sam_mask_B/train/division_filter_results
-    batch_size: 4
+    batch_size: 2
     val_data_len: 4
     num_workers: 8
     use_shuffle: true
@@ -63,12 +64,12 @@ model:
 #  loss: iou
 
 train:
-  gpu_ids: [2, 3]
+  gpu_ids: [0, 1]
   accumulate_grad_batches: 4
-  max_epochs: 400
-  every_n_epochs: 10
+  max_epochs: 500
+  every_n_epochs: 100
   optimizer:
-    lr: 3e-5
+    lr: 1e-5
 
 test:
   gpu_ids: [0]
@@ -77,7 +78,7 @@ warmup_epochs: 10
 max_epochs: 200
 
 ckpt_path:
-  'lora_sam': ./experiments_lightning/tune_sam/lora_mseloss_1tvloss_5e-1gradloss_version_5/epoch=49.ckpt
+  'lora_sam': /home/xinrui/projects/ShadowDiffusion/experiments_lightning/tune_sam/lora_mseloss_1tvloss_1e-1contGradloss_version_7/epoch=99.ckpt
   'ddpm': ./experiments/official_test/checkpoint/SRD_dataset/I2130000_E12080 # two ckpts share same name
   'SAM':  "./experiments/official_test/SAM_ckpt/sam_vit_h_4b8939.pth"
 

@@ -1,40 +1,38 @@
-name: tune_sam
-version: lora_mseloss_1tvloss_5e-1gradloss_version_5
-phase: test
-samshadow_ckpt_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/tune_sam/lora_mseloss_1tvloss_5e-1gradloss_version_5/epoch=49.ckpt
-save_result_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/tune_sam/lora_mseloss_1tvloss_5e-1gradloss_version_5/49_to_test_diffusion
+name: ablation
+version: mse
+phase: train
+samshadow_ckpt_path: ./
+save_result_path: ./
 
-#unfreeze_sam_head: False
-#detach_sam: True
-#diffusion_scale: 1
 tv_loss_beta: 1
-grad_loss_weight: 5e-1
+grad_loss_weight: 0.1
+loss_type: mse
 
 datasets:
   train:
     name: SRD_sam_train
     mode: HR
     dataroot: ./dataset/SRD_sam_mask_B/train
-    gt_file_name: division_filter_results # residual mask
-    batch_size: 1
+    gt_mask_dir: ./dataset/SRD_sam_mask_B/train/division_filter_results
+    batch_size: 2
     num_workers: 8
     use_shuffle: true
   test:
     name: SRD_sam_val
     mode: LRHR
     dataroot: ./dataset/SRD_sam_mask_B/test
-    gt_file_name: division_filter_results
+    gt_mask_dir: ./dataset/SRD_sam_mask_B/test/division_filter_results
     batch_size: 1
     data_len: -1
 
 train:
-  gpu_ids: [2, 3]
-  accumulate_grad_batches: 8
-  max_epochs: 50
-  every_n_epochs: 10
+  gpu_ids: [0, 1]
+  accumulate_grad_batches: 4
+  max_epochs: 100
+  every_n_epochs: 50
 
 test:
-  gpu_ids: [2]
+  gpu_ids: [0]
 
 warmup_epochs: 10
 max_epochs: 200

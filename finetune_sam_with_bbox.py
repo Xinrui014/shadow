@@ -51,6 +51,87 @@ def total_variation_loss(img, beta=1.0):
     tv_w = torch.pow(img[:, :, :, 1:] - img[:, :, :, :-1], 2).sum()
     return beta * (tv_h + tv_w) / (batch_size * channel * height * width)
 
+def contour_gradient_penalty_loss(img):
+    gray_tensor = img
+    penumbra_area = ((gray_tensor > 50./255) & (gray_tensor < 220./255)).float()
+    # penumbra = penumbra_area.cpu().numpy()
+
+    indices = torch.nonzero(penumbra_area.squeeze())
+    if len(indices) > 0:
+        c_mean = torch.mean(indices.float(), dim=0)
+        cX, cY = int(c_mean[1].item()), int(c_mean[0].item())
+    else:
+        cX, cY = 0, 0
+
+    sobelx = F.conv2d(gray_tensor,
+                      torch.tensor([[[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]]).unsqueeze(1).float().to(gray_tensor.device),
+                      padding=1)
+    sobely = F.conv2d(gray_tensor,
+                      torch.tensor([[[-1, -2, -1], [0, 0, 0], [1, 2, 1]]]).unsqueeze(1).float().to(gray_tensor.device),
+                      padding=1)
+    sobelx = sobelx * penumbra_area
+    sobely = sobely * penumbra_area
+    batch_size, channel, height, width = gray_tensor.size()
+    x_coords = torch.arange(width).unsqueeze(0).repeat(height, 1).to(gray_tensor.device)
+    y_coords = torch.arange(height).unsqueeze(1).repeat(1, width).to(gray_tensor.device)
+    weight_map_x = torch.ones((height, width)).to(sobelx.device)
+    weight_map_y = torch.ones((height, width)).to(sobely.device)
+    # Quadrant
+    weight_map_x = weight_map_x * (x_coords < cX).float() * -2 + 1  # -1 for left, 1 for right
+    weight_map_y = weight_map_y * (y_coords < cY).float() * -2 + 1  # -1 for top, 1 for bottom
+    mod_sobelx = sobelx * weight_map_x.unsqueeze(0).unsqueeze(0)
+    mod_sobely = sobely * weight_map_y.unsqueeze(0).unsqueeze(0)
+    num_pixels = penumbra_area.sum()
+    smooth = 1e-7
+    # orientation_loss = (torch.sum(torch.clamp(mod_sobelx, 0)) + torch.sum(torch.clamp(mod_sobely, 0)) + smooth) / (
+    #         2 * num_pixels + 100 * smooth)
+
+    positive_mod_sobelx = F.relu(mod_sobelx)
+    positive_mod_sobely = F.relu(mod_sobely)
+    orientation_loss = (positive_mod_sobelx.sum() + positive_mod_sobely.sum() + smooth) / (
+                2 * num_pixels + 10 * smooth)
+
+    return orientation_loss
+
+def contour_gradient_noPenumbra_penalty_loss(img):
+    gray_tensor = img
+    penumbra_area = ((gray_tensor > 50./255) & (gray_tensor < 220./255)).float()
+    indices = torch.nonzero(penumbra_area.squeeze())
+    if len(indices) > 0:
+        c_mean = torch.mean(indices.float(), dim=0)
+        cX, cY = int(c_mean[1].item()), int(c_mean[0].item())
+    else:
+        cX, cY = 0, 0
+
+    sobelx = F.conv2d(gray_tensor,
+                      torch.tensor([[[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]]).unsqueeze(1).float().to(gray_tensor.device),
+                      padding=1)
+    sobely = F.conv2d(gray_tensor,
+                      torch.tensor([[[-1, -2, -1], [0, 0, 0], [1, 2, 1]]]).unsqueeze(1).float().to(gray_tensor.device),
+                      padding=1)
+    # sobelx = sobelx * penumbra_area
+    # sobely = sobely * penumbra_area
+    batch_size, channel, height, width = gray_tensor.size()
+    x_coords = torch.arange(width).unsqueeze(0).repeat(height, 1).to(gray_tensor.device)
+    y_coords = torch.arange(height).unsqueeze(1).repeat(1, width).to(gray_tensor.device)
+    weight_map_x = torch.ones((height, width)).to(sobelx.device)
+    weight_map_y = torch.ones((height, width)).to(sobely.device)
+    # Quadrant
+    weight_map_x = weight_map_x * (x_coords < cX).float() * -2 + 1  # -1 for left, 1 for right
+    weight_map_y = weight_map_y * (y_coords < cY).float() * -2 + 1  # -1 for top, 1 for bottom
+    mod_sobelx = sobelx * weight_map_x.unsqueeze(0).unsqueeze(0)
+    mod_sobely = sobely * weight_map_y.unsqueeze(0).unsqueeze(0)
+    smooth = 1e-7
+    # orientation_loss = (torch.sum(torch.clamp(mod_sobelx, 0)) + torch.sum(torch.clamp(mod_sobely, 0)) + smooth) / (
+    #         2 * num_pixels + 100 * smooth)
+
+    positive_mod_sobelx = F.relu(mod_sobelx)
+    positive_mod_sobely = F.relu(mod_sobely)
+    orientation_loss = (positive_mod_sobelx.sum() + positive_mod_sobely.sum() + smooth) / (
+                2 * (batch_size * channel * height * width))
+
+    return orientation_loss
+
 class SAM_with_bbox(nn.Module):
     def __init__(
             self,
@@ -91,10 +172,10 @@ class SamDataModule(L.LightningDataModule):
 
     def setup(self, stage="fit"):
         if stage == "fit":
-            self.train_data = TuneSAM(self.args.datasets.train.dataroot, self.args.datasets.train.gt_file_name, self.args.bbox_path)
+            self.train_data = TuneSAM(self.args.datasets.train.dataroot, self.args.datasets.train.gt_mask_dir, self.args.bbox_path)
             # self.val_data = TuneSAM(self.args.datasets.test.dataroot, self.args.bbox_path, data_len=3)
         elif stage == "test":
-            self.test_data = TuneSAM(self.args.datasets.test.dataroot, self.args.datasets.test.gt_file_name, self.args.test_bbox_path, data_len=self.args.datasets.test.data_len)
+            self.test_data = TuneSAM(self.args.datasets.test.dataroot, self.args.datasets.test.gt_mask_dir, self.args.test_bbox_path, data_len=self.args.datasets.test.data_len)
             # self.test_data = TuneSAM(self.args.datasets.train.dataroot, self.args.bbox_path)
     def train_dataloader(self):
         dataloader = DataLoader(self.train_data,
@@ -133,6 +214,7 @@ class SAMFinetune(L.LightningModule):
         self.MSEloss = torch.nn.MSELoss()
         self.cal_gradients = Get_gradient_nopadding()
         self.L1_loss = torch.nn.L1Loss()
+        self.contour_gradient_loss = 0
 
         self.save_hyperparameters()
         # self.freeze_parameters(self.sam.image_encoder.parameters())
@@ -160,29 +242,41 @@ class SAMFinetune(L.LightningModule):
         # residual = (train_data['HR'] + 1) / 2 - (train_data['SR'] + 1) / 2
         # residual = torch.mean(residual, dim=1, keepdim=True)
         # residual_mask = torch.where(residual < 0.05, torch.zeros_like(residual), torch.ones_like(residual))
-        residual_mask = train_data['sam_mask']
-        save_image(residual_mask, 'residual_mask.png')
+        division_mask = train_data['sam_mask']
+        # save_image(division_mask, 'division_mask.png')
         # self.segmentation_loss = self.criterionBCE(pred_mask, residual_mask)
         # self.log('segmentation_loss', self.segmentation_loss.item(), on_step=True)
 
         # change loss from segmentation loss to MSE loss
-        self.mse_loss = self.MSEloss(pred_mask, residual_mask)
-        self.log('MSEloss', self.mse_loss.item(), on_step=True)
+        self.mse_loss = self.MSEloss(pred_mask, division_mask)
+        self.log('Loss/MSEloss', self.mse_loss.item(), on_step=True)
 
         # Add Gradient loss
-        gradients = self.cal_gradients(pred_mask)
-        self.gradient_loss = self.L1_loss(self.cal_gradients(pred_mask), self.cal_gradients(residual_mask))
-        self.log('Gradloss', self.gradient_loss.item(), on_step=True)
+        # gradients = self.cal_gradients(pred_mask)
+        # self.gradient_loss = self.L1_loss(self.cal_gradients(pred_mask), self.cal_gradients(residual_mask))
+        # self.log('Gradloss', self.gradient_loss.item(), on_step=True)
+
+        # self.contour_gradient_loss = contour_gradient_penalty_loss(pred_mask)
+        self.contour_gradient_loss = contour_gradient_penalty_loss(pred_mask)
+        self.log('Loss/contour_gradient_loss', self.contour_gradient_loss.item(), on_step=True)
 
         # Add TV loss
         self.tv_loss = total_variation_loss(pred_mask, beta=self.args.tv_loss_beta)
-        self.log('TVloss', self.tv_loss.item(), on_step=True)
-        self.loss = self.mse_loss + self.tv_loss + self.args.grad_loss_weight*self.gradient_loss
+        self.log('Loss/TVloss', self.tv_loss.item(), on_step=True)
+
+        if self.args.loss_type == 'mse':
+            self.loss = self.mse_loss
+        if self.args.loss_type == 'mse+tv':
+            self.loss = self.mse_loss + self.tv_loss
+        if self.args.loss_type == 'mse+constrain':
+            self.loss = self.mse_loss + self.args.grad_loss_weight*self.contour_gradient_loss
+
+        # self.loss = self.mse_loss + self.tv_loss + self.args.grad_loss_weight *self.contour_gradient_loss
 
 
         return {'loss': self.loss,
                 'pred_mask': pred_mask,
-                'residual_mask': residual_mask}
+                'division_mask': division_mask}
 
 
     def sample(self, data):
@@ -208,7 +302,7 @@ class SAMFinetune(L.LightningModule):
         result = self(train_data)
         loss = result['loss']
         pred_mask = result['pred_mask']
-        residual_mask = result['residual_mask']
+        division_mask = result['division_mask']
         filename = train_data['filename']
         log_img = train_data['SR'][0].clamp_(-1, 1)
         lr_img = (log_img + 1) / 2
@@ -217,7 +311,7 @@ class SAMFinetune(L.LightningModule):
         # self.print_param_values()
         if self.global_step % 100 == 0:
             self.logger.experiment.add_image('Train/sam_pred_mask', pred_mask[0], self.global_step)
-            self.logger.experiment.add_image('Train/residual_mask', residual_mask[0], self.global_step)
+            self.logger.experiment.add_image('Train/division_mask', division_mask[0], self.global_step)
             self.logger.experiment.add_image('Train/lr_image', lr_img, self.global_step)
             self.logger.experiment.add_text('Train/filename_sam_pred_mask', filename[0], self.global_step)
 
@@ -244,9 +338,9 @@ class SAMFinetune(L.LightningModule):
         # residual = (test_data['HR'] + 1) / 2 - (test_data['SR'] + 1) / 2
         # residual = torch.mean(residual, dim=1, keepdim=True)
         # residual_mask = torch.where(residual < 0.05, torch.zeros_like(residual), torch.ones_like(residual))
-        residual_mask = test_data['sam_mask']
+        division_mask = test_data['sam_mask']
         filename = test_data['filename']
-        return pred_mask, residual_mask, test_data['SR'], filename
+        return pred_mask, division_mask, test_data['SR'], filename
 
 
     def load_pretrained_models(self, path):
@@ -285,9 +379,10 @@ def train(args: DictConfig) -> None:
     checkpoint_callback = ModelCheckpoint(
         dirpath=save_path,
         filename='{epoch}',
-        save_on_train_epoch_end=True
-        # save_top_k=-1,
-        # every_n_epochs=save_every_n_epochs,  # Save every 20 epochs
+        # save_on_train_epoch_end=True
+        save_top_k=-1,
+        every_n_epochs=save_every_n_epochs,  # Save every 20 epochs
+        save_last=True,  # Save the last model as well
     )
     trainer = L.Trainer(
         accelerator='gpu',
@@ -312,6 +407,7 @@ def sample(args: DictConfig) -> None:
     data_module = SamDataModule(args)
     data_module.setup("test")
     model = SAMFinetune.load_from_checkpoint(args.samshadow_ckpt_path)
+    # model = SAMFinetune(args, args.ckpt_path)
     predictor = L.Trainer(
         accelerator='gpu',
         devices=args.test.gpu_ids,
@@ -328,12 +424,12 @@ def sample(args: DictConfig) -> None:
     if not os.path.exists(save_path):
         os.mkdir(save_path)
     for i in range(len(predictions)):
-        pred_mask, residual_mask, lr_image, filename = predictions[i]
+        pred_mask, division_mask, lr_image, filename = predictions[i]
         filename = filename[0]
 
-        # ber = Metrics.calc_ber(pred_mask, residual_mask)
+        # ber = Metrics.calc_ber(pred_mask, division_mask)
         res = Metrics.tensor2img(pred_mask)
-        gt_mask = Metrics.tensor2img(residual_mask)
+        gt_mask = Metrics.tensor2img(division_mask)
         metrics = Metrics.compute_errors(res, gt_mask)
 
         delta_1.append(metrics['a1'])
@@ -350,10 +446,10 @@ def sample(args: DictConfig) -> None:
         soft_mask_img = Image.fromarray(soft_mask.astype(np.uint8))
         soft_mask_img.save(soft_mask_path)
 
-        # residual_mask = residual_mask.squeeze().cpu().numpy() * 255
-        # residual_mask_path = os.path.join(save_path, f'{filename}_residual_mask.png')
-        # residual_mask_img = Image.fromarray(residual_mask.astype(np.uint8))
-        # residual_mask_img.save(residual_mask_path)
+        # division_mask = division_mask.squeeze().cpu().numpy() * 255
+        # division_mask_path = os.path.join(save_path, f'{filename}_division_mask.png')
+        # division_mask_img = Image.fromarray(division_mask.astype(np.uint8))
+        # division_mask_img.save(division_mask_path)
 
     delta_1_mean = np.mean(delta_1)
     abs_rel_mean = np.mean(abs_rel)
