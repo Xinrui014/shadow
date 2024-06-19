@@ -1,12 +1,12 @@
 name: ablation
-version: mse
-phase: train
-samshadow_ckpt_path: ./
-save_result_path: ./
+version: mse+1tv
+phase: test
+samshadow_ckpt_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/ablation/mse+1tv/epoch=99.ckpt
+save_result_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/ablation/mse+1tv/99_to_test_diffusion
 
 tv_loss_beta: 1
 grad_loss_weight: 0.1
-loss_type: mse
+loss_type: mse+1tv
 
 datasets:
   train:

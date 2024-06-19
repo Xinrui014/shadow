@@ -309,6 +309,9 @@ class GaussianDiffusion(nn.Module):
         # res = res * avg_channel_gt / avg_channel
         res_map = torch.where(res < 0.05, torch.zeros_like(res), torch.ones_like(res))
         loss_mask = self.loss_func(updated_mask, res_map)
+
+        # remove refinement
+        # return loss
         return loss + loss_mask * 0.1
 
     def forward(self, x, *args, **kwargs):

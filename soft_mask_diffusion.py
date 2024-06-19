@@ -17,6 +17,10 @@ from data.LRHR_dataset import LRHRDataset, TrainDataset, TestDataset, TuneSAM
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.strategies import DDPStrategy
+from torch import optim
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from warmup_scheduler import GradualWarmupScheduler
+
 # from pl_bolts.optimizers.lr_scheduler import LinearWarmupCosineAnnealingLR
 from omegaconf import DictConfig
 import model.networks as networks
@@ -245,6 +249,8 @@ class SamShadow(L.LightningModule):
 
         if args.phase == 'train':
             self.diffusion.set_new_noise_schedule(args['model']['beta_schedule']['train'])
+
+        # load ShadowDiffusion pretrain model
         if path is not None:
             self.load_pretrained_models(path)
 
@@ -254,8 +260,11 @@ class SamShadow(L.LightningModule):
         #         print(name)
 
         # keep lora parameters on training
-        self.freeze_parameters(self.lora.parameters())
-        # self.freeze_parameters(self.lora.prompt_encoder.parameters())
+        # self.freeze_parameters(self.lora.parameters())
+        # trian lora mask encoder and mask decoder
+        self.freeze_parameters(self.lora.prompt_encoder.parameters())
+        a = 1
+
 
 
     @staticmethod
@@ -275,13 +284,14 @@ class SamShadow(L.LightningModule):
         pred_mask = self.lora(sam_input, bbox)
         pred_mask = torch.sigmoid(pred_mask)
         division_mask = train_data['sam_mask']
-        # self.mse_loss = self.MSEloss(pred_mask, division_mask)
-        # self.log('Loss/MSEloss', self.mse_loss.item(), on_step=True)
-        # self.contour_gradient_loss = contour_gradient_penalty_loss(pred_mask)
-        # self.log('Loss/contour_gradient_loss', self.contour_gradient_loss.item(), on_step=True)
-        # self.tv_loss = total_variation_loss(pred_mask, beta=self.args.tv_loss_beta)
-        # self.log('Loss/TVloss', self.tv_loss.item(), on_step=True)
+        self.mse_loss = self.MSEloss(pred_mask, division_mask)
+        self.log('Loss/MSEloss', self.mse_loss.item(), on_step=True)
+        self.contour_gradient_loss = contour_gradient_penalty_loss(pred_mask)
+        self.log('Loss/contour_gradient_loss', self.contour_gradient_loss.item(), on_step=True)
+        self.tv_loss = total_variation_loss(pred_mask, beta=self.args.tv_loss_beta)
+        self.log('Loss/TVloss', self.tv_loss.item(), on_step=True)
 
+        # pred_mask = train_data['mask']
         # ShadowDiffusion
         train_data['mask'] = pred_mask
         l_pix = self.diffusion(train_data)
@@ -290,14 +300,16 @@ class SamShadow(L.LightningModule):
         self.log('l_pix_loss', self.diffusion_loss.item(), on_step=True)
         self.loss = self.diffusion_loss
 
-        # if self.args.loss_type == 'mse':
-        #     self.loss = self.mse_loss
-        # if self.args.loss_type == 'mse+tv':
-        #     self.loss = self.mse_loss + self.tv_loss
-        # if self.args.loss_type == 'mse+constrain':
-        #     self.loss = self.mse_loss + self.args.grad_loss_weight * self.contour_gradient_loss
-        #
-        # self.loss = self.loss + self.diffusion_loss
+        if self.args.loss_type == 'mse':
+            self.loss = self.mse_loss
+        if self.args.loss_type == 'mse+tv':
+            self.loss = self.mse_loss + self.tv_loss
+        if self.args.loss_type == 'mse+constrain':
+            self.loss = self.mse_loss + self.args.grad_loss_weight * self.contour_gradient_loss
+        if self.args.loss_type == 'mse+tv+constrain':
+            self.loss = self.mse_loss + self.tv_loss+ self.args.grad_loss_weight * self.contour_gradient_loss
+
+        self.loss = self.loss + self.diffusion_loss
 
         # optimize SAM and diffusion saperately
         # sam_optimizer, diffusion_optimizer = self.optimizers()
@@ -387,15 +399,16 @@ class SamShadow(L.LightningModule):
         gen_path = '{}_gen.pth'.format(path.ddpm)
         self.diffusion.load_state_dict(torch.load(gen_path), strict=False)
 
-        sam_state_dict = torch.load(path.lora_sam, map_location=self.device)
-        lora_state_dict = {}
-
-        for key, value in sam_state_dict['state_dict'].items():
-            if key.startswith('lora.'):
-                lora_key = key.replace('lora.', '')
-                lora_state_dict[lora_key] = value
-
-        self.lora.load_state_dict(lora_state_dict, strict=False)
+        # load tuned SAM
+        # sam_state_dict = torch.load(path.lora_sam, map_location=self.device)
+        # lora_state_dict = {}
+        #
+        # for key, value in sam_state_dict['state_dict'].items():
+        #     if key.startswith('lora.'):
+        #         lora_key = key.replace('lora.', '')
+        #         lora_state_dict[lora_key] = value
+        #
+        # self.lora.load_state_dict(lora_state_dict, strict=False)
 
 
     def configure_optimizers(self):
@@ -405,10 +418,15 @@ class SamShadow(L.LightningModule):
         # ]
         # optimizer = torch.optim.Adam(param_groups)
 
-        sam_optimizer = torch.optim.Adam(self.sam.parameters(), lr=0.0002)
+        # sam_optimizer = torch.optim.Adam(self.sam.parameters(), lr=0.0002)
         diffusion_optimizer = torch.optim.Adam(self.diffusion.parameters(), lr=self.args.train.optimizer.lr)
+        # warmup_epochs = 10
+        # scheduler_cosine = CosineAnnealingLR(diffusion_optimizer, self.args.train.max_epochs - warmup_epochs, eta_min=1e-6)
+        # scheduler = GradualWarmupScheduler(diffusion_optimizer, multiplier=1, total_epoch=warmup_epochs,
+        #                                    after_scheduler=scheduler_cosine)
 
         # return [sam_optimizer, diffusion_optimizer]
+        # return [diffusion_optimizer, scheduler]
         return diffusion_optimizer
 
 

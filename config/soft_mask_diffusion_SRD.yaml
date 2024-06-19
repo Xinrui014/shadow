@@ -1,12 +1,12 @@
-name: tune_sam+diffusion
-version: lora_sam_mse_1tvloss_1e-1contGradloss_1e-5_version_9_1
-phase: train
+name: joint_tune_sam+diffusion
+version: joint_mse+1tv+1e-1constrain_1e-5_v1
+phase: test
 samshadow_ckpt_path: ./
 save_result_path: ./
 
-#tv_loss_beta: 1
-#grad_loss_weight: 0.1
-#loss_type: mse
+tv_loss_beta: 1
+grad_loss_weight: 0.1
+loss_type: mse+tv+constrain
 
 
 datasets:
@@ -14,7 +14,7 @@ datasets:
     name: SRD_sam_train
     mode: HR
     dataroot: ./dataset/SRD_sam_mask_B/train
-    gt_mask_dir: ./dataset/SRD_sam_mask_B/train/division_filter_results
+    gt_mask_dir: /home/xinrui/projects/ShadowDiffusion/dataset/SRD_sam_mask_B/train/division_filter_results
     batch_size: 2
     val_data_len: 4
     num_workers: 8
@@ -23,7 +23,7 @@ datasets:
     name: SRD_sam_val
     mode: LRHR
     dataroot: ./dataset/SRD_sam_mask_B/test
-    gt_mask_dir: ./dataset/SRD_sam_mask_B/test/division_filter_results
+    gt_mask_dir: /home/xinrui/projects/ShadowDiffusion/dataset/SRD_sam_mask_B/test/division_filter_results
     data_len: -1
     batch_size: 1
 
@@ -64,8 +64,8 @@ model:
 #  loss: iou
 
 train:
-  gpu_ids: [0, 1]
-  accumulate_grad_batches: 4
+  gpu_ids: [0, 1, 2, 3]
+  accumulate_grad_batches: 2
   max_epochs: 500
   every_n_epochs: 100
   optimizer:
@@ -75,10 +75,10 @@ test:
   gpu_ids: [0]
 
 warmup_epochs: 10
-max_epochs: 200
+
 
 ckpt_path:
-  'lora_sam': /home/xinrui/projects/ShadowDiffusion/experiments_lightning/tune_sam/lora_mseloss_1tvloss_1e-1contGradloss_version_7/epoch=99.ckpt
+#  'lora_sam': /home/xinrui/projects/ShadowDiffusion/experiments_lightning/tune_sam/lora_mseloss_1tvloss_1e-1contGradloss_version_7/epoch=99.ckpt
   'ddpm': ./experiments/official_test/checkpoint/SRD_dataset/I2130000_E12080 # two ckpts share same name
   'SAM':  "./experiments/official_test/SAM_ckpt/sam_vit_h_4b8939.pth"
 
