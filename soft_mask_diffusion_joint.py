@@ -109,6 +109,46 @@ def contour_gradient_penalty_loss(img):
     return orientation_loss
 
 
+def contour_gradient_noPenumbra_penalty_loss(img):
+    gray_tensor = img
+    penumbra_area = ((gray_tensor > 50./255) & (gray_tensor < 220./255)).float()
+    indices = torch.nonzero(penumbra_area.squeeze())
+    if len(indices) > 0:
+        c_mean = torch.mean(indices.float(), dim=0)
+        cX, cY = int(c_mean[1].item()), int(c_mean[0].item())
+    else:
+        cX, cY = 0, 0
+
+    sobelx = F.conv2d(gray_tensor,
+                      torch.tensor([[[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]]).unsqueeze(1).float().to(gray_tensor.device),
+                      padding=1)
+    sobely = F.conv2d(gray_tensor,
+                      torch.tensor([[[-1, -2, -1], [0, 0, 0], [1, 2, 1]]]).unsqueeze(1).float().to(gray_tensor.device),
+                      padding=1)
+    # sobelx = sobelx * penumbra_area
+    # sobely = sobely * penumbra_area
+    batch_size, channel, height, width = gray_tensor.size()
+    x_coords = torch.arange(width).unsqueeze(0).repeat(height, 1).to(gray_tensor.device)
+    y_coords = torch.arange(height).unsqueeze(1).repeat(1, width).to(gray_tensor.device)
+    weight_map_x = torch.ones((height, width)).to(sobelx.device)
+    weight_map_y = torch.ones((height, width)).to(sobely.device)
+    # Quadrant
+    weight_map_x = weight_map_x * (x_coords < cX).float() * -2 + 1  # -1 for left, 1 for right
+    weight_map_y = weight_map_y * (y_coords < cY).float() * -2 + 1  # -1 for top, 1 for bottom
+    mod_sobelx = sobelx * weight_map_x.unsqueeze(0).unsqueeze(0)
+    mod_sobely = sobely * weight_map_y.unsqueeze(0).unsqueeze(0)
+    smooth = 1e-7
+    # orientation_loss = (torch.sum(torch.clamp(mod_sobelx, 0)) + torch.sum(torch.clamp(mod_sobely, 0)) + smooth) / (
+    #         2 * num_pixels + 100 * smooth)
+
+    positive_mod_sobelx = F.relu(mod_sobelx)
+    positive_mod_sobely = F.relu(mod_sobely)
+    orientation_loss = (positive_mod_sobelx.sum() + positive_mod_sobely.sum() + smooth) / (
+                2 * (batch_size * channel * height * width))
+
+    return orientation_loss
+
+
 class SAM_with_bbox(nn.Module):
     def __init__(
             self,
@@ -168,7 +208,7 @@ class SamShadowDataModule(L.LightningDataModule):
 
     def predict_dataloader(self):
         dataloader = DataLoader(self.test_data, batch_size=self.args.datasets.test.batch_size, shuffle=False,
-                                num_workers=self.num_workers, pin_memory=True)
+                                num_workers=0, pin_memory=True)
         return dataloader
 
 
@@ -250,9 +290,9 @@ class SamShadow(L.LightningModule):
         if args.phase == 'train':
             self.diffusion.set_new_noise_schedule(args['model']['beta_schedule']['train'])
 
-        # load ShadowDiffusion pretrain model
-        if path is not None:
-            self.load_pretrained_models(path)
+        # load ShadowDiffusion and LoraSAM finetuned model
+        # if path is not None:
+        #     self.load_pretrained_models(path)
 
         self.save_hyperparameters()
         # for name, param in self.lora.named_parameters():
@@ -264,8 +304,6 @@ class SamShadow(L.LightningModule):
         # trian lora mask encoder and mask decoder
         self.freeze_parameters(self.lora.prompt_encoder.parameters())
         a = 1
-
-
 
     @staticmethod
     def freeze_parameters(params):
@@ -279,27 +317,34 @@ class SamShadow(L.LightningModule):
 
     def forward(self, train_data):
         # SAM lora
-        # sam_input = train_data['sam_SR']
-        # bbox = train_data['bbox']
-        # pred_mask = self.lora(sam_input, bbox)
-        # pred_mask = torch.sigmoid(pred_mask)
+        sam_input = train_data['sam_SR']
+        bbox = train_data['bbox']
+        pred_mask = self.lora(sam_input, bbox)
+        pred_mask = torch.sigmoid(pred_mask)
         division_mask = train_data['sam_mask']
-        # self.mse_loss = self.MSEloss(pred_mask, division_mask)
-        # self.log('Loss/MSEloss', self.mse_loss.item(), on_step=True)
-        # self.contour_gradient_loss = contour_gradient_penalty_loss(pred_mask)
-        # self.log('Loss/contour_gradient_loss', self.contour_gradient_loss.item(), on_step=True)
+        self.mse_loss = self.MSEloss(pred_mask, division_mask)
+        self.log('Loss/MSEloss', self.mse_loss.item(), on_step=True)
+        self.contour_gradient_loss = contour_gradient_noPenumbra_penalty_loss(pred_mask)
+        self.log('Loss/contour_gradient_loss', self.contour_gradient_loss.item(), on_step=True)
         # self.tv_loss = total_variation_loss(pred_mask, beta=self.args.tv_loss_beta)
         # self.log('Loss/TVloss', self.tv_loss.item(), on_step=True)
 
-        pred_mask = train_data['mask']
+        # pred_mask = train_data['mask']
         # ShadowDiffusion
-        # train_data['mask'] = pred_mask
+        train_data['mask'] = pred_mask
         l_pix = self.diffusion(train_data)
         b, c, h, w = train_data['HR'].shape
         self.diffusion_loss = l_pix.sum() / int(b * c * h * w)
         self.log('l_pix_loss', self.diffusion_loss.item(), on_step=True)
 
-        self.loss = self.diffusion_loss
+        if self.args.loss_type == 'mse':
+            self.loss = self.mse_loss + self.diffusion_loss
+        # if self.args.loss_type == 'mse+tv':
+        #     self.loss = self.mse_loss + self.tv_loss
+        if self.args.loss_type == 'mse+constrain':
+            self.loss = self.mse_loss + self.args.grad_loss_weight * self.contour_gradient_loss + self.diffusion_loss
+        # if self.args.loss_type == 'mse+tv+constrain':
+        #     self.loss = self.mse_loss + self.tv_loss+ self.args.grad_loss_weight * self.contour_gradient_loss
 
         # optimize SAM and diffusion saperately
         # sam_optimizer, diffusion_optimizer = self.optimizers()
@@ -319,13 +364,13 @@ class SamShadow(L.LightningModule):
 
 
     def sample(self, data):
-        # sam_input = data['sam_SR']
-        # bbox = data['bbox']
-        # pred_mask = self.lora(sam_input, bbox)
-        # pred_mask = torch.sigmoid(pred_mask)
+        sam_input = data['sam_SR']
+        bbox = data['bbox']
+        pred_mask = self.lora(sam_input, bbox)
+        pred_mask = torch.sigmoid(pred_mask)
 
-        # data['mask'] = pred_mask
-        pred_mask = data['mask']
+        data['mask'] = pred_mask
+        # pred_mask = data['mask']
         shadow_removal_sr, diffusion_mask_pred = self.diffusion.super_resolution(data['SR'], data['mask'], continous=False)
         return shadow_removal_sr, diffusion_mask_pred, pred_mask
 
@@ -348,8 +393,6 @@ class SamShadow(L.LightningModule):
         filename = train_data['filename']
         log_img = train_data['SR'][0].clamp_(-1, 1)
         lr_img = (log_img + 1) / 2
-
-        # print(self.trainer.global_step)
 
         # print("After training step:")
         # self.print_param_values()
@@ -388,8 +431,13 @@ class SamShadow(L.LightningModule):
 
 
     def load_pretrained_models(self, path):
-        gen_path = '{}_gen.pth'.format(path.ddpm)
-        self.diffusion.load_state_dict(torch.load(gen_path), strict=False)
+        gen_path = path.SAM_Diffusion
+        checkpoint = torch.load(gen_path, map_location=lambda storage, loc: storage)
+        self.load_state_dict(checkpoint['state_dict'], strict=True)
+        sam_path = path.lora_sam
+        checkpoint_sam = torch.load(sam_path, map_location=lambda storage, loc: storage)
+        self.load_state_dict(checkpoint_sam['state_dict'], strict=False)
+        print("Checkpoint loaded successfully.")
 
         # load tuned SAM
         # sam_state_dict = torch.load(path.lora_sam, map_location=self.device)
@@ -431,6 +479,7 @@ def train(args: DictConfig) -> None:
     ckpt_path = args.ckpt_path
     # model = diffusion(networks.define_G, args, ckpt_path)
     model = SamShadow(SAM, networks.define_G, args, ckpt_path)
+    model.load_pretrained_models(ckpt_path)
 
     # load training parameters
     save_model_name = args.name
@@ -452,7 +501,7 @@ def train(args: DictConfig) -> None:
     )
     trainer = L.Trainer(
         accelerator='gpu',
-        precision="16-mixed",
+        precision=16,
         devices=args.train.gpu_ids,
         max_epochs=max_epochs,
         # gradient_clip_val=0.5,
@@ -497,25 +546,25 @@ def sample(args: DictConfig) -> None:
         PSNR.append(eval_psnr)
         SSIM.append(eval_ssim)
         # Save SR image
-        # sr_path = os.path.join(save_path, f'{filename}_sr.png')
-        # res = Metrics.tensor2img(shadow_removal_sr)
-        # sr_img = Image.fromarray(res)
-        # sr_img.save(sr_path)
-        # # Save HR image
-        # hr_path = os.path.join(save_path, f'{filename}_hr.png')
-        # hr_img = Metrics.tensor2img(gt_image)
-        # hr_img = Image.fromarray(hr_img)
-        # hr_img.save(hr_path)
-        # # Save mask
-        # soft_mask = sam_pred_soft_mask.squeeze().cpu().numpy() * 255
-        # soft_mask_path = os.path.join(save_path, f'{filename}_soft_mask.png')
-        # soft_mask_img = Image.fromarray(soft_mask.astype(np.uint8))
-        # soft_mask_img.save(soft_mask_path)
-        #
-        # mask = diffusion_mask_pred.squeeze().cpu().numpy() * 255
-        # mask_path = os.path.join(save_path, f'{filename}_diffusion_mask.png')
-        # mask_img = Image.fromarray(mask.astype(np.uint8))
-        # mask_img.save(mask_path)
+        sr_path = os.path.join(save_path, f'{filename}_sr.png')
+        res = Metrics.tensor2img(shadow_removal_sr)
+        sr_img = Image.fromarray(res)
+        sr_img.save(sr_path)
+        # Save HR image
+        hr_path = os.path.join(save_path, f'{filename}_hr.png')
+        hr_img = Metrics.tensor2img(gt_image)
+        hr_img = Image.fromarray(hr_img)
+        hr_img.save(hr_path)
+        # Save mask
+        soft_mask = sam_pred_soft_mask.squeeze().cpu().numpy() * 255
+        soft_mask_path = os.path.join(save_path, f'{filename}_soft_mask.png')
+        soft_mask_img = Image.fromarray(soft_mask.astype(np.uint8))
+        soft_mask_img.save(soft_mask_path)
+
+        mask = diffusion_mask_pred.squeeze().cpu().numpy() * 255
+        mask_path = os.path.join(save_path, f'{filename}_diffusion_mask.png')
+        mask_img = Image.fromarray(mask.astype(np.uint8))
+        mask_img.save(mask_path)
 
     psnr_mean = np.mean(PSNR)
     ssim_mean = np.mean(SSIM)
@@ -529,7 +578,7 @@ def sample(args: DictConfig) -> None:
             file.write(f"{key}: {value}\n")
 
 
-@hydra.main(config_path="./config", config_name='soft_mask_diffusion_SRD', version_base=None)
+@hydra.main(config_path="./config", config_name='soft_mask_diffusion_SRD_joint', version_base=None)
 def main(args: DictConfig) -> None:
     torch.set_float32_matmul_precision("high")
     L.seed_everything(1234)

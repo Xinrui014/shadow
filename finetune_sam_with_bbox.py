@@ -25,6 +25,64 @@ from model.segment_anything.utils.transforms import ResizeLongestSide
 from model.segment_anything.sam_lora import LoRA_Sam
 # from model.segment_anything.dpt_head import DPTHead
 
+def apply_low_pass_filter(mask: object, kernel_size: object = 5) -> object:
+    # Create a Gaussian kernel
+    kernel = torch.ones((1, 1, kernel_size, kernel_size), dtype=torch.float32)
+
+    kernel = kernel / kernel.sum()
+    kernel = kernel.view(1, 1, kernel_size, kernel_size)
+    kernel = kernel.to(mask.device)
+
+    # Apply the low-pass filter using convolution
+    filtered_mask = F.conv2d(mask, kernel, padding=kernel_size // 2)
+
+    return filtered_mask
+
+def gradient_orientation_map(input_image):
+    sobelx = F.conv2d(input_image, torch.tensor([[[[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]]],
+                                                dtype=input_image.dtype,
+                                                device=input_image.device), padding=1)
+    sobely = F.conv2d(input_image, torch.tensor([[[[-1, -2, -1], [0, 0, 0], [1, 2, 1]]]],
+                                                dtype=input_image.dtype,
+                                                device=input_image.device), padding=1)
+    gradient_orientation = torch.atan2(sobely, sobelx)
+    return gradient_orientation
+
+
+def gradient_orientation_loss(soft_mask, shadow_input, gt_mask):
+    # test_gt_mask = gt_mask.clone().detach().cpu().numpy()
+    # penumbra_area = soft_mask
+    # set a threshold
+    threshold_low = 0
+    threshold_high = 1
+    penumbra_area = torch.where((gt_mask > threshold_low) & (gt_mask < threshold_high), 1.0, 0.0)
+    # test_penumbra_area = penumbra_area.detach().cpu().numpy()
+    # convert the shadow input_image to gray
+    shadow_input = torch.mean(shadow_input, dim=1, keepdim=True)
+    # upscale shadow_input to 256x256
+    # shadow_input = F.interpolate(shadow_input, (penumbra_area.shape[2], penumbra_area.shape[3]), mode='bilinear', align_corners=False)
+    # Apply low-pass filter to the shadow input_image
+    shadow_input = apply_low_pass_filter(shadow_input)
+    # Compute the gradient of the shadow input_image penumbra area
+    shadow_input_penumbra = shadow_input*penumbra_area
+    gradient_orientation_shadow_input = gradient_orientation_map(shadow_input)
+    gradient_orientation_soft_mask = gradient_orientation_map(soft_mask)
+    gradient_orientation_shadow_input = gradient_orientation_shadow_input*penumbra_area
+    gradient_orientation_soft_mask = gradient_orientation_soft_mask*penumbra_area
+    # test_shadow_input = gradient_orientation_shadow_input.detach().clone().cpu().numpy()
+    # test_soft_mask = gradient_orientation_soft_mask.detach().clone().cpu().numpy()
+    # Compute the cosine similarity between the gradient orientations
+    # using "+" because the two maps has different orientation
+    gradient_orientation_shadow_input = -gradient_orientation_shadow_input
+    cos = nn.CosineSimilarity(dim=1, eps=1e-6)
+    cosine_similarity = cos(-gradient_orientation_shadow_input, gradient_orientation_soft_mask)
+    # Compute the gradient orientation loss
+    gradient_loss = (1 - cosine_similarity)*penumbra_area
+
+    num_pixels = penumbra_area.sum()
+    gradient_loss = gradient_loss.sum()/(num_pixels+1e-7)
+    return gradient_loss
+
 
 def _iou_loss(pred, target):
     pred = torch.sigmoid(pred)
@@ -239,10 +297,12 @@ class SAMFinetune(L.LightningModule):
         bbox = train_data['bbox']
         pred_mask = self.lora(sam_input, bbox)
         pred_mask = torch.sigmoid(pred_mask)
+
         # residual = (train_data['HR'] + 1) / 2 - (train_data['SR'] + 1) / 2
         # residual = torch.mean(residual, dim=1, keepdim=True)
         # residual_mask = torch.where(residual < 0.05, torch.zeros_like(residual), torch.ones_like(residual))
         division_mask = train_data['sam_mask']
+        # division_mask_numpy = division_mask.detach().cpu().numpy()
         # save_image(division_mask, 'division_mask.png')
         # self.segmentation_loss = self.criterionBCE(pred_mask, residual_mask)
         # self.log('segmentation_loss', self.segmentation_loss.item(), on_step=True)
@@ -256,9 +316,16 @@ class SAMFinetune(L.LightningModule):
         # self.gradient_loss = self.L1_loss(self.cal_gradients(pred_mask), self.cal_gradients(residual_mask))
         # self.log('Gradloss', self.gradient_loss.item(), on_step=True)
 
-        # self.contour_gradient_loss = contour_gradient_penalty_loss(pred_mask)
-        self.contour_gradient_loss = contour_gradient_penalty_loss(pred_mask)
-        self.log('Loss/contour_gradient_loss', self.contour_gradient_loss.item(), on_step=True)
+        if self.args.constrain == 'Penumbra':
+            self.contour_gradient_loss = contour_gradient_penalty_loss(pred_mask)
+        if self.args.constrain == 'noPenumbra':
+            self.contour_gradient_loss = contour_gradient_noPenumbra_penalty_loss(pred_mask)
+        if self.args.constrain == 'orientation': # inout image is 0, 1 or -1,1
+            input_image = (train_data['SR']+1)/2.
+            gt_mask = train_data['mask']
+            self.contour_gradient_loss = gradient_orientation_loss(pred_mask, input_image, gt_mask)
+
+        self.log(f'Loss/contour_gradient_loss_{self.args.constrain}', self.contour_gradient_loss.item(), on_step=True)
 
         # Add TV loss
         self.tv_loss = total_variation_loss(pred_mask, beta=self.args.tv_loss_beta)
@@ -284,6 +351,10 @@ class SAMFinetune(L.LightningModule):
         bbox = data['bbox']
         pred_mask = self.lora(sam_input, bbox)
         pred_mask = torch.sigmoid(pred_mask)
+        # threshold = 0.5
+        # pred_mask = (pred_mask > threshold).float()
+        # prediction = pred_mask.detach().cpu().numpy()
+
         # pred_mask = tempered_sigmoid(pred_mask, temperature=20)
         return pred_mask
 

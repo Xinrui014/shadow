@@ -1,0 +1,89 @@
+name: joint_tune_sam_diffusion
+version: gt2_mse_1contGradnoPenumbra_1diffusion_noR_5e-6_version_2
+phase: test
+samshadow_ckpt_path: ./experiments_lightning/joint_tune_sam_diffusion/gt2_mse_1contGradnoPenumbra_1diffusion_noR_5e-6_version_2/epoch=599.ckpt
+save_result_path: ./experiments_lightning/joint_tune_sam_diffusion/gt2_mse_1contGradnoPenumbra_1diffusion_noR_5e-6_version_2/599
+
+tv_loss_beta: 1
+grad_loss_weight: 1
+loss_type: mse+constrain
+
+
+datasets:
+  train:
+    name: SRD_sam_train
+    mode: HR
+    dataroot: ./dataset/SRD_sam_mask_B/train
+    gt_mask_dir: ./dataset/SRD_sam_mask_B/train/division_filter_results_2
+    batch_size: 1
+    val_data_len: 4
+    num_workers: 8
+    use_shuffle: true
+  test:
+    name: SRD_sam_val
+    mode: LRHR
+    dataroot: ./dataset/SRD_sam_mask_B/test
+    gt_mask_dir: ./dataset/SRD_sam_mask_B/test/division_filter_results_2
+    data_len: -1
+    batch_size: 1
+
+model:
+  which_model_G: sr3
+  unet:
+    in_channel: 7
+    out_channel: 3
+    inner_channel: 64
+    norm_groups: 16
+    channel_multiplier:
+      - 1
+      - 2
+      - 4
+      - 8
+    attn_res:
+      - 16
+    res_blocks: 2
+    dropout: 0
+  beta_schedule:
+    train:
+      schedule: linear
+      n_timestep: 1000
+      linear_start: 1e-4
+      linear_end: 0.02
+    val:
+      schedule: linear
+      n_timestep: 1000
+      linear_start: 1e-4
+      linear_end: 0.02
+  diffusion:
+    image_size: 512
+    channels: 3
+    conditional: true
+
+#sam:
+#  input_size: 1024
+#  loss: iou
+
+train:
+  gpu_ids: [0, 1, 2, 3]
+  accumulate_grad_batches: 4
+  max_epochs: 600
+  every_n_epochs: 100
+  optimizer:
+    lr: 5e-6
+
+test:
+  gpu_ids: [0]
+
+warmup_epochs: 10
+
+
+ckpt_path:
+  'lora_sam': ./experiments_lightning/tune_sam/lora_gt2_mseloss_1contGradnoPenumbra_version_12/epoch=99.ckpt
+  'SAM_Diffusion': ./experiments_lightning/tune_sam+diffusion/image_gt2_lora_sam_mse_1contGradnoPenumbra_noRefinement_1e-5_version_14/epoch=499.ckpt
+  'SAM':  ./experiments/official_test/SAM_ckpt/sam_vit_h_4b8939.pth
+
+
+bbox_path: ./dataset/SRD_sam_mask_B/train/bounding_boxes_DHAN.yaml
+test_bbox_path: ./dataset/SRD_sam_mask_B/test/bounding_boxes_DHAN.yaml
+model_type: vit_h
+sam_rank: 8

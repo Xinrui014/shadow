@@ -207,6 +207,7 @@ class TestDataset(Dataset):
     def __getitem__(self, index):
         img_SR_original = Image.open(self.sr_path[index]).convert("RGB")
         hr_name = self.sr_path[index].replace('.jpg', '_free.jpg')
+        # hr_name = self.sr_path[index].replace('shad.jpg', 'noshad.jpg')
         hr_name = hr_name.replace('_A', '_C')
         img_HR_original = Image.open(hr_name).convert("RGB")
         img_mask_original = Image.open(self.mask_path[index]).convert("1")
@@ -274,6 +275,7 @@ class TuneSAM(Dataset):
             hr_name = self.sr_path[index].replace('.jpg', '_no_shadow.jpg')
         elif self.phase == 'test':
             hr_name = self.sr_path[index].replace('.jpg', '_free.jpg')
+            # hr_name = self.sr_path[index].replace('shad.jpg', 'noshad.jpg')
 
         hr_name = hr_name.replace('_A', '_C')
 

@@ -1,33 +1,34 @@
-name: ablation
-version: mse+1tv
-phase: test
-samshadow_ckpt_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/ablation/mse+1tv/epoch=99.ckpt
-save_result_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/ablation/mse+1tv/99_to_test_diffusion
+name: tune_sam
+version: lora_gt2_mseloss_1e-1orientation_version_15
+phase: train
+samshadow_ckpt_path: ./
+save_result_path: ./
 
-tv_loss_beta: 1
+tv_loss_beta: 0
 grad_loss_weight: 0.1
-loss_type: mse+1tv
+loss_type: mse+constrain
+constrain: orientation
 
 datasets:
   train:
     name: SRD_sam_train
     mode: HR
     dataroot: ./dataset/SRD_sam_mask_B/train
-    gt_mask_dir: ./dataset/SRD_sam_mask_B/train/division_filter_results
+    gt_mask_dir: ./dataset/SRD_sam_mask_B/train/division_filter_results_2
     batch_size: 2
     num_workers: 8
     use_shuffle: true
   test:
     name: SRD_sam_val
     mode: LRHR
-    dataroot: ./dataset/SRD_sam_mask_B/test
-    gt_mask_dir: ./dataset/SRD_sam_mask_B/test/division_filter_results
+    dataroot: ./dataset/SRD_sam_mask_B/train
+    gt_mask_dir: ./dataset/SRD_sam_mask_B/train/division_filter_results_2
     batch_size: 1
     data_len: -1
 
 train:
-  gpu_ids: [0, 1]
-  accumulate_grad_batches: 4
+  gpu_ids: [0,1,2,3]
+  accumulate_grad_batches: 2
   max_epochs: 100
   every_n_epochs: 50
 
@@ -38,12 +39,12 @@ warmup_epochs: 10
 max_epochs: 200
 
 ckpt_path:
-  'sam_adapter': ./experiments/official_test/SAM_adapter_ckpt/model_epoch_best.pth
+#  'sam_adapter': ./experiments/official_test/SAM_adapter_ckpt/model_epoch_best.pth
   'ddpm': ./experiments/official_test/checkpoint/SRD_dataset/I2130000_E12080 # two ckpts share same name
   'SAM': "./experiments/official_test/SAM_ckpt/sam_vit_h_4b8939.pth"
 
 bbox_path: "./dataset/SRD_sam_mask_B/train/bounding_boxes_DHAN.yaml"
-test_bbox_path: "./dataset/SRD_sam_mask_B/test/bounding_boxes_DHAN.yaml"
+test_bbox_path: "./dataset/SRD_sam_mask_B/train/bounding_boxes_DHAN.yaml"
 model_type: "vit_h"
 sam_rank: 8
 

@@ -210,7 +210,7 @@ class GaussianDiffusion(nn.Module):
             if i >= len(b)*0.2:
                 et, mask = self.denoise_fn(torch.cat([x_lr, mask_0, xt], dim=1), t)
             else:
-                et, mask = self.denoise_fn(torch.cat([x_lr, mask, xt], dim=1), t)
+                et, mask = self.denoise_fn(torch.cat([x_lr, mask_0, xt], dim=1), t)
             x0_t = (xt - et * (1 - at).sqrt()) / at.sqrt()
             x0_preds.append(x0_t.to('cpu'))
             mask_preds.append(mask.to('cpu'))
@@ -312,7 +312,8 @@ class GaussianDiffusion(nn.Module):
 
         # remove refinement
         # return loss
-        return loss + loss_mask * 0.1
+        # return loss + loss_mask * 0.1
+        return loss
 
     def forward(self, x, *args, **kwargs):
         return self.p_losses(x, *args, **kwargs)
