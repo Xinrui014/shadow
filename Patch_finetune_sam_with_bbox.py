@@ -12,7 +12,7 @@ from torchvision.utils import save_image
 from model.sam_adapter.sam_adapt import SAM
 import core.metrics as Metrics
 from core.metrics import Get_gradient_nopadding
-from data.LRHR_dataset import TuneSAM, TuneSAM_patch
+from data.LRHR_dataset import TuneSAM, TuneSAM_patch, TuneSAM_patch_test
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.strategies import DDPStrategy
@@ -24,6 +24,7 @@ from model.segment_anything import sam_model_registry
 from model.segment_anything.utils.transforms import ResizeLongestSide
 from model.segment_anything.sam_lora import LoRA_Sam
 # from model.segment_anything.dpt_head import DPTHead
+from utils.dataset_utils import splitimage, mergeimage, splitbbox
 
 def apply_low_pass_filter(mask: object, kernel_size: object = 5) -> object:
     # Create a Gaussian kernel
@@ -242,7 +243,7 @@ class SamDataModule(L.LightningDataModule):
                 # self.val_data = TuneSAM(self.args.datasets.test.dataroot, self.args.bbox_path, data_len=3)
         elif stage == "test":
             if self.args.patch_tricky:
-                self.test_data = TuneSAM_patch(self.args.datasets.test.dataroot, self.args.datasets.test.gt_mask_dir,
+                self.test_data = TuneSAM_patch_test(self.args.datasets.test.dataroot, self.args.datasets.test.gt_mask_dir,
                                          self.args.test_bbox_path, data_len=self.args.datasets.test.data_len)
             else:
                 self.test_data = TuneSAM(self.args.datasets.test.dataroot, self.args.datasets.test.gt_mask_dir, self.args.test_bbox_path, data_len=self.args.datasets.test.data_len)
@@ -272,6 +273,7 @@ class SAMFinetune(L.LightningModule):
         self.args = args
         self.save_model_name = args.name
         # self.automatic_optimization = False
+
 
         self.sam_model = sam_model_registry[args.model_type](checkpoint=path.SAM)
         self.sam = SAM_with_bbox(image_encoder=self.sam_model.image_encoder,
@@ -362,15 +364,36 @@ class SAMFinetune(L.LightningModule):
 
 
     def sample(self, data):
-        sam_input = data['sam_SR']
-        bbox = data['bbox']
-        pred_mask = self.lora(sam_input, bbox)
-        pred_mask = torch.sigmoid(pred_mask)
-        # threshold = 0.5
-        # pred_mask = (pred_mask > threshold).float()
-        # prediction = pred_mask.detach().cpu().numpy()
 
-        # pred_mask = tempered_sigmoid(pred_mask, temperature=20)
+        if self.args.patch_tricky:
+            restored_list = []
+            predict_mask_list = []
+            diffusion_mask_list = []
+            tile = 256
+            repeat = 1
+            base_repeat = 1
+            tile_overlap = 30
+            for _ in range(repeat // base_repeat):
+                # rgb_gt = data['HR'].numpy().squeeze().transpose((1, 2, 0))
+                input = data['SR'].repeat(base_repeat, 1, 1, 1).cuda()
+                bbox = data['bbox']
+                sam_input = data['sam_SR'].repeat(base_repeat, 1, 1, 1).cuda()
+                B, C, H, W = input.shape
+
+                sam_data, _, starts = splitimage(sam_input, crop_size=tile, overlap_size=tile_overlap)
+                split_bbox, starts = splitbbox(input, bbox, crop_size=tile, overlap_size=tile_overlap)
+
+                merge_predict_mask = [None] * len(sam_data)
+                for i, (sam, box)in enumerate(zip(sam_data, split_bbox)):
+                    mask = torch.sigmoid(self.lora(sam, box))
+                    merge_predict_mask[i] = mask
+                predict_mask_list.append(mergeimage(merge_predict_mask, starts, crop_size=tile, resolution=(B, 1, H, W)))
+            pred_mask = torch.mean(torch.cat(predict_mask_list, dim=0), dim=0, keepdim=True)
+        else:
+            sam_input = data['sam_SR']
+            bbox = data['bbox']
+            pred_mask = self.lora(sam_input, bbox)
+            pred_mask = torch.sigmoid(pred_mask)
         return pred_mask
 
     def print_param_values(self):
@@ -419,11 +442,8 @@ class SAMFinetune(L.LightningModule):
 
 
     def predict_step(self, test_data):
-        pred_mask = self.sample(test_data)
 
-        # residual = (test_data['HR'] + 1) / 2 - (test_data['SR'] + 1) / 2
-        # residual = torch.mean(residual, dim=1, keepdim=True)
-        # residual_mask = torch.where(residual < 0.05, torch.zeros_like(residual), torch.ones_like(residual))
+        pred_mask = self.sample(test_data)
         division_mask = test_data['sam_mask']
         filename = test_data['filename']
         return pred_mask, division_mask, test_data['SR'], filename
@@ -516,10 +536,10 @@ def sample(args: DictConfig) -> None:
         # ber = Metrics.calc_ber(pred_mask, division_mask)
         res = Metrics.tensor2img(pred_mask)
         gt_mask = Metrics.tensor2img(division_mask)
-        metrics = Metrics.compute_errors(res, gt_mask)
-
-        delta_1.append(metrics['a1'])
-        abs_rel.append(metrics['abs_rel'])
+        # metrics = Metrics.compute_errors(res, gt_mask)
+        #
+        # delta_1.append(metrics['a1'])
+        # abs_rel.append(metrics['abs_rel'])
 
 
         # lr_path = os.path.join(save_path,f'{filename}_lr.png')
@@ -527,7 +547,8 @@ def sample(args: DictConfig) -> None:
         # lr_img = Image.fromarray(lr_img)
         # lr_img.save(lr_path)
         # Save mask
-        soft_mask = pred_mask.squeeze().cpu().numpy() * 255
+        soft_mask = pred_mask.squeeze().cpu().numpy()
+        soft_mask = cv2.resize(soft_mask*255.0, [256, 256], interpolation=cv2.INTER_AREA)
         soft_mask_path = os.path.join(save_path, f'{filename}.png')
         soft_mask_img = Image.fromarray(soft_mask.astype(np.uint8))
         soft_mask_img.save(soft_mask_path)
@@ -537,13 +558,13 @@ def sample(args: DictConfig) -> None:
         # division_mask_img = Image.fromarray(division_mask.astype(np.uint8))
         # division_mask_img.save(division_mask_path)
 
-    delta_1_mean = np.mean(delta_1)
-    abs_rel_mean = np.mean(abs_rel)
-    print(f'delta_1: {delta_1_mean}\nabs_rel: {abs_rel_mean}')
+    # delta_1_mean = np.mean(delta_1)
+    # abs_rel_mean = np.mean(abs_rel)
+    # print(f'delta_1: {delta_1_mean}\nabs_rel: {abs_rel_mean}')
 
 
 
-@hydra.main(config_path="./config", config_name='finetune_sam_with_bbox', version_base=None)
+@hydra.main(config_path="./config", config_name='Patch_finetune_sam_with_bbox', version_base=None)
 def main(args: DictConfig) -> None:
     torch.set_float32_matmul_precision("high")
     L.seed_everything(1234)

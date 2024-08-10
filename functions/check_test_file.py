@@ -1,10 +1,10 @@
 import os
 import re
 
-rs_path =os.path.expanduser("~/Documents/projects/sam_shadow_removal/ShadowDiffusion/experiments/srd_official_eval_240311_145038/results/")
-mask_path = os.path.expanduser("~/Documents/projects/sam_shadow_removal/ShadowDiffusion/data/SRD_Dataset/srd_mask_DHAN/SRD_testmask")
+rs_path =os.path.expanduser("~/Documents/projects/sam_shadow_removal/ShadowDiffusion_orig/experiments/srd_official_eval_240311_145038/results/")
+mask_path = os.path.expanduser("~/Documents/projects/sam_shadow_removal/ShadowDiffusion_orig/data/SRD_Dataset/srd_mask_DHAN/SRD_testmask")
 
-gt_path = os.path.expanduser("~/Documents/projects/sam_shadow_removal/ShadowDiffusion/data/SRD_Dataset/test/test_C")
+gt_path = os.path.expanduser("~/Documents/projects/sam_shadow_removal/ShadowDiffusion_orig/data/SRD_Dataset/test/test_C")
 def extract_base_name(filename):
     return re.sub(r'_\d+_sr_process$', '', filename)
 

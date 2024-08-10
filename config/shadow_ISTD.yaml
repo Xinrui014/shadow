@@ -7,7 +7,7 @@ datasets:
   train:
     name: ISTD_Dataset_train
     mode: HR
-#    dataroot: /home/xinrui/projects/ShadowDiffusion/data/sam_ISTD/train # use sam mask
+#    dataroot: /home/xinrui/projects/ShadowDiffusion_orig/data/sam_ISTD/train # use sam mask
     dataroot: ./data/sam_ISTD/train
     batch_size: 12
     num_workers: 8
@@ -71,7 +71,7 @@ test:
 
 
 #  dataroot: /home/xinrui/projects/SAM-Adapter/data/ISTD_Dataset/train
-#  ddpm_dataroot: /home/xinrui/projects/ShadowDiffusion/data/sam_ISTD/train
+#  ddpm_dataroot: /home/xinrui/projects/ShadowDiffusion_orig/data/sam_ISTD/train
 
 
 ckpt_path:

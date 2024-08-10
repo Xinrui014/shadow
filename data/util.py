@@ -103,3 +103,15 @@ def transform_augment(img_list, split='val', min_max=(0, 1), patch_size=160):
     ret_img.append(imgs[-1])
     ret_img[-1] = torch.mean(ret_img[-1], 0, keepdim=True)
     return ret_img
+
+def transform_augment_unresize(img_list, min_max=(0, 1)):
+
+    imgs = [totensor(img) for img in img_list]
+    img_mask = imgs[-1]
+    img_mask = img_mask.repeat(3, 1, 1)
+    imgs[-1] = img_mask
+
+    ret_img = [img * (min_max[1] - min_max[0]) + min_max[0] for img in imgs[0:-1]]
+    ret_img.append(imgs[-1])
+    ret_img[-1] = torch.mean(ret_img[-1], 0, keepdim=True)
+    return ret_img

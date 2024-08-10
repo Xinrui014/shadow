@@ -1,0 +1,104 @@
+name: UIUC_2
+version: ISTD_23.1
+phase: test
+#samshadow_ckpt_path: ./experiments_lightning/joint_tune_sam_diffusion/gt2_mse_1contGradnoPenumbra_1diffusion_noR_5e-6_version_2/epoch=499.ckpt
+save_result_path: ./experiments_lightning/UIUC_2/ISTD_23.1
+
+
+tv_loss_beta: 1
+grad_loss_weight: 0.1
+loss_type: mse+constrain
+test_normalize: false
+patch_tricky: false
+detach: false
+
+datasets:
+  train:
+    name: SRD_sam_train
+    mode: HR
+    dataroot: ./dataset/LRSS_2/test
+    gt_mask_dir: ./dataset/LRSS_2/train/division_filter_results_2
+    batch_size: 1
+    val_data_len: 4
+    num_workers: 8
+    use_shuffle: true
+  test:
+    name: SRD_sam_val
+    mode: LRHR
+    dataroot: ./dataset/UIUC_2/test
+    gt_mask_dir: ./dataset/SRD_sam_mask_B/test/division_filter_results # place holder
+    data_len: -1
+    batch_size: 1
+
+model:
+  which_model_G: sr3
+  unet:
+    in_channel: 7
+    out_channel: 3
+    inner_channel: 64
+    norm_groups: 16
+    channel_multiplier:
+      - 1
+      - 2
+      - 4
+      - 8
+    attn_res:
+      - 16
+    res_blocks: 2
+    dropout: 0
+  beta_schedule:
+    train:
+      schedule: linear
+      n_timestep: 1000
+      linear_start: 1e-4
+      linear_end: 0.02
+    val:
+      schedule: linear
+      n_timestep: 1000
+      linear_start: 1e-4
+      linear_end: 0.02
+  diffusion:
+    image_size: 512
+    channels: 3
+    conditional: true
+
+#sam:
+#  input_size: 1024
+#  loss: iou
+
+train:
+  gpu_ids: [0]
+  accumulate_grad_batches: 4
+  max_epochs: 600
+  every_n_epochs: 100
+  optimizer:
+    lr: 5e-6
+
+test:
+  gpu_ids: [0]
+
+warmup_epochs: 10
+
+
+ckpt_path:
+#  'lora_sam': /home/xinrui/projects/ShadowDiffusion_orig/experiments_lightning/ablation/mse/epoch=99.ckpt
+#  'SAM_Diffusion': /home/xinrui/projects/ShadowDiffusion_orig/experiments_lightning/ablation_diffusion/mse+noRefinement_diffusion/epoch=499.ckpt
+#  'lora_sam': ./experiments_lightning/tune_sam/lora_mseloss_1tvloss_1contGradnoPenumbra_version_8/epoch=99.ckpt
+#  'SAM_Diffusion': ./experiments_lightning/tune_sam+diffusion/image_lora_sam_mse_1e-1contGradnoPenumbra_noRefinement_1e-5_version_12/epoch=499.ckpt
+#  'lora_sam':
+#  'SAM_Diffusion': /home/xinrui/projects/ShadowDiffusion_orig/experiments_lightning/tune_sam+diffusion/sam_only_noRefinement/epoch=499.ckpt
+#  'lora_sam': ./experiments_lightning/tune_sam/ISTD+SRD_lora_mseloss_1e-1contGradnoPenumbra_version_1/epoch=99.ckpt
+#  'SAM_Diffusion': ./experiments_lightning/tune_sam+diffusion/ISTD+SRD_image_lora_sam_mse_1e-1contGradloss_version_1/epoch=599.ckpt
+#  'lora_sam': ./experiments_lightning/tune_sam/lora_gt2_mseloss_1contGradnoPenumbra_version_12/epoch=99.ckpt
+#  'SAM_Diffusion': ./experiments_lightning/tune_sam+diffusion/image_gt2_lora_sam_mse_1contGradnoPenumbra_noRefinement_1e-5_version_14/epoch=499.ckpt
+  'lora_sam': ./experiments_lightning/tune_sam/ISTD_lora_mseloss_1e-1contGradnoPenumbra_version_23/epoch=99.ckpt
+  'SAM_Diffusion': ./experiments_lightning/tune_sam+diffusion/image_ISTD_lora_mseloss_1e-1contGradnoPenumbra_version_23.1/epoch=2999.ckpt
+  'SAM': ./experiments/official_test/SAM_ckpt/sam_vit_h_4b8939.pth
+  'ddpm':
+
+
+#bbox_path: ./dataset/SRD_sam_mask_B/train/bounding_boxes_DHAN.yaml
+test_bbox_path: ./dataset/UIUC_2/test/bounding_boxes.yaml
+model_type: vit_h
+sam_rank: 8
+

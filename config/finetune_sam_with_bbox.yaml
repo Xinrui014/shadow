@@ -1,28 +1,29 @@
 name: tune_sam
-version: lora_gt2_mseloss_1e-1orientation_version_15
+version: ISTD+_lora_mseloss_1e-1contGradnoPenumbra_version_24
 phase: train
-samshadow_ckpt_path: ./
-save_result_path: ./
+samshadow_ckpt_path: ./experiments_lightning/tune_sam/ISTD+_lora_mseloss_1e-1contGradnoPenumbra_version_24/epoch=99.ckpt
+save_result_path: ./experiments_lightning/tune_sam/ISTD+_lora_mseloss_1e-1contGradnoPenumbra_version_24/99_to_train_diffusion
 
-tv_loss_beta: 0
+
 grad_loss_weight: 0.1
 loss_type: mse+constrain
-constrain: orientation
+constrain: noPenumbra
+patch_tricky: false
 
 datasets:
   train:
     name: SRD_sam_train
     mode: HR
-    dataroot: ./dataset/SRD_sam_mask_B/train
-    gt_mask_dir: ./dataset/SRD_sam_mask_B/train/division_filter_results_2
+    dataroot: ./dataset/ISTD_adjusted_C/train
+    gt_mask_dir: ./dataset/ISTD_adjusted_C/train/train_B
     batch_size: 2
     num_workers: 8
     use_shuffle: true
   test:
     name: SRD_sam_val
     mode: LRHR
-    dataroot: ./dataset/SRD_sam_mask_B/train
-    gt_mask_dir: ./dataset/SRD_sam_mask_B/train/division_filter_results_2
+    dataroot: ./dataset/ISTD_adjusted_C/train
+    gt_mask_dir: ./dataset/ISTD_adjusted_C/train/train_B
     batch_size: 1
     data_len: -1
 
@@ -35,16 +36,14 @@ train:
 test:
   gpu_ids: [0]
 
-warmup_epochs: 10
-max_epochs: 200
 
 ckpt_path:
 #  'sam_adapter': ./experiments/official_test/SAM_adapter_ckpt/model_epoch_best.pth
   'ddpm': ./experiments/official_test/checkpoint/SRD_dataset/I2130000_E12080 # two ckpts share same name
   'SAM': "./experiments/official_test/SAM_ckpt/sam_vit_h_4b8939.pth"
 
-bbox_path: "./dataset/SRD_sam_mask_B/train/bounding_boxes_DHAN.yaml"
-test_bbox_path: "./dataset/SRD_sam_mask_B/train/bounding_boxes_DHAN.yaml"
+bbox_path: "./dataset/ISTD_adjusted_C/train/bounding_boxes_ISTD.yaml"
+test_bbox_path: "./dataset/ISTD_adjusted_C/train/bounding_boxes_ISTD.yaml"
 model_type: "vit_h"
 sam_rank: 8
 

@@ -238,24 +238,25 @@ class UNet(nn.Module):
         self.mask_tail = FCN()
 
     def forward(self, x, time):
-        x_lr = x[:, :3, :, :]
-        x_mask = x[:, 3, :, :].unsqueeze(1)
-        x_noisy = x[:, 4:, :, :]
+        # x_lr = x[:, :3, :, :]
+        # x_mask = x[:, 3, :, :].unsqueeze(1)
+        # x_noisy = x[:, 4:, :, :]
         # updated_mask = self.mask_update(x_noisy, x_mask)
         # x_updated_mask = updated_mask.detach()
-        x = torch.cat((x_lr, x_mask, x_noisy), dim=1)
+        # x = torch.cat((x_lr, x_mask, x_noisy), dim=1)
 
         # put self.noise_level_mlp into device
 
-        # t = self.noise_level_mlp(time) if exists(
-        #     self.noise_level_mlp) else None
-        if exists(self.noise_level_mlp):
-            self.noise_level_mlp = self.noise_level_mlp.to(time.device)
-            t = self.noise_level_mlp(time)
-        else:
-            t = None
+        t = self.noise_level_mlp(time) if exists(
+            self.noise_level_mlp) else None
+        # if exists(self.noise_level_mlp):
+        #     self.noise_level_mlp = self.noise_level_mlp.to(time.device)
+        #     t = self.noise_level_mlp(time)
+        # else:
+        #     t = None
 
         feats = []
+        # print(self.downs)
         for layer in self.downs:
             if isinstance(layer, ResnetBlocWithAttn):
                 x = layer(x, t)

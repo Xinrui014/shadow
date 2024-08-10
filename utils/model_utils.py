@@ -22,6 +22,12 @@ def save_checkpoint(model_dir, state, session):
 
 def load_checkpoint(model, weights):
     checkpoint = torch.load(weights)
+    print("Model state_dict keys:")
+    k=0
+    for key in model.state_dict().keys():
+        print(f"  {key}")
+        k+=1
+
     try:
         model.load_state_dict(checkpoint["state_dict"])
     except:

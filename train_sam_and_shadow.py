@@ -234,7 +234,7 @@ class sam_shadow(L.LightningModule):
 
         self.log(f'{filename}_PSNR', eval_psnr, prog_bar=True)
         self.log(f'{filename}_SSIM', eval_ssim)
-        save_path = "/home/xinrui/projects/ShadowDiffusion/experiments_lightning/fix_sam/fix_sam_version_1/last/"
+        save_path = "/home/xinrui/projects/ShadowDiffusion_orig/experiments_lightning/fix_sam/fix_sam_version_1/last/"
         # save SR and mask_pred
         if not os.path.exists(save_path):
             os.mkdir(save_path)

@@ -26,10 +26,10 @@ def get_training_files(path):
 
 
 def main():
-    sam_checkpoint = "/home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion/experiments/official_test/SAM_ckpt/sam_vit_b_01ec64.pth"
+    sam_checkpoint = "/home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion_orig/experiments/official_test/SAM_ckpt/sam_vit_b_01ec64.pth"
     model_type = "vit_b"
     device = "cuda"
-    training_path = "/home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion/dataset/SRD_DHAN_mask_old/train/"
+    training_path = "/home/user/Documents/projects/sam_shadow_removal/ShadowDiffusion_orig/dataset/SRD_DHAN_mask_old/train/"
     sam_model = sam_model_registry[model_type](checkpoint=sam_checkpoint)
     sam_model.to(device=device)
     sam_model.train()

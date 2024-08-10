@@ -189,28 +189,27 @@ class GaussianDiffusion(nn.Module):
         n = x_lr.size(0)
         noise = torch.randn_like(x_lr)
         skip = self.num_timesteps // 5
-        # skip = self.num_timesteps // 25
         seq = range(0, self.num_timesteps, skip)
         x0_preds = []
         xs = [noise]
         mask_preds = []
         b = self.betas
         eta = 0.
-        gamma_ori = 0.1
+        gamma_ori = 0.2
         idx = 0
         # sample_inter = (1 | (self.num_timesteps//10))
         seq_next = [-1] + list(seq[:-1])
-        mask = mask_0
+        # mask = mask_0
         for i, j in zip(reversed(seq), reversed(seq_next)):
             t = (torch.ones(n) * i).to(device)
             next_t = (torch.ones(n) * j).to(device)
             at = self.compute_alpha(b, t.long())
             at_next = self.compute_alpha(b, next_t.long())
             xt = xs[-1].to('cuda')
-            if i >= len(b)*0.2:
-                et, mask = self.denoise_fn(torch.cat([x_lr, mask_0, xt], dim=1), t)
-            else:
-                et, mask = self.denoise_fn(torch.cat([x_lr, mask_0, xt], dim=1), t)
+            # mask_ = mask_0.detach().cpu().numpy()
+
+            et, mask_1 = self.denoise_fn(torch.cat([x_lr, mask_0, xt], dim=1), t)
+            mask = mask_1
             x0_t = (xt - et * (1 - at).sqrt()) / at.sqrt()
             x0_preds.append(x0_t.to('cpu'))
             mask_preds.append(mask.to('cpu'))
@@ -246,6 +245,52 @@ class GaussianDiffusion(nn.Module):
         #     return ret_img[-1]
 
     @torch.no_grad()
+    def p_sample_loop_d(self, x_lr, mask_0, h_hat, continous=False):
+        device = self.betas.device
+        n = x_lr.size(0)
+        noise = torch.randn_like(x_lr)
+        skip = self.num_timesteps // 5
+        seq = range(0, self.num_timesteps, skip)
+        x0_preds = []
+        xs = [noise]
+        mask_preds = []
+        b = self.betas
+        eta = 0.
+        gamma_ori = 0.2
+        idx = 0
+        # sample_inter = (1 | (self.num_timesteps//10))
+        seq_next = [-1] + list(seq[:-1])
+        mask = mask_0
+        for i, j in zip(reversed(seq), reversed(seq_next)):
+            t = (torch.ones(n) * i).to(device)
+            next_t = (torch.ones(n) * j).to(device)
+            at = self.compute_alpha(b, t.long())
+            at_next = self.compute_alpha(b, next_t.long())
+            xt = xs[-1].to('cuda')
+
+            et, mask_1 = self.denoise_fn(torch.cat([x_lr, mask_0, xt], dim=1), t)
+            mask = mask_1
+            x0_t = (xt - et * (1 - at).sqrt()) / at.sqrt()
+            x0_preds.append(x0_t.to('cpu'))
+            mask_preds.append(mask.to('cpu'))
+
+            gamma = gamma_ori + idx * 0.15
+            xt_next_temp = (x_lr + 1) / (2 * h_hat)
+            xt_next_temp = xt_next_temp * 2 - 1
+            xtemp = xt_next_temp / (1 + gamma / (h_hat * h_hat)) + (gamma / (h_hat * h_hat + gamma)) * x0_t
+
+            c1 = eta * ((1 - at / at_next) * (1 - at_next) / (1 - at)).sqrt()
+            c2 = ((1 - at_next) - c1 ** 2).sqrt()
+            xt_next = at_next.sqrt() * xtemp + c1 * torch.randn_like(x_lr) + c2 * et
+
+            xs.append(xt_next.to('cpu'))
+        ret_img = xs
+        # if continous:
+        #     return ret_img
+        # else:
+        return ret_img[-1], mask_preds[-1]
+
+    @torch.no_grad()
     def sample(self, batch_size=1, continous=False):
         image_size = self.image_size
         channels = self.channels
@@ -257,6 +302,10 @@ class GaussianDiffusion(nn.Module):
     # remove h_hat
     def super_resolution(self, x_lr, mask, continous=False):
         return self.p_sample_loop(x_lr, mask, continous)
+
+    @torch.no_grad()
+    def super_resolution_d(self, x_lr, mask, h_hat, continous=False):
+        return self.p_sample_loop_d(x_lr, mask, h_hat, continous)
 
     def q_sample(self, x_start, continuous_sqrt_alpha_cumprod, noise=None):
         noise = default(noise, lambda: torch.randn_like(x_start))

@@ -2,8 +2,8 @@ name: fix_sam
 version: version_4_binary_mask
 phase: test
 ckpt_name: ""
-samshadow_ckpt_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/fix_sam/version_4_binary_mask/epoch=199.ckpt
-save_result_path: /home/xinrui/projects/ShadowDiffusion/experiments_lightning/fix_sam/version_4_binary_mask/199
+samshadow_ckpt_path: /home/xinrui/projects/ShadowDiffusion_orig/experiments_lightning/fix_sam/version_4_binary_mask/epoch=199.ckpt
+save_result_path: /home/xinrui/projects/ShadowDiffusion_orig/experiments_lightning/fix_sam/version_4_binary_mask/199
 
 datasets:
   train:
@@ -68,7 +68,7 @@ test:
 
 
 #  dataroot: /home/xinrui/projects/SAM-Adapter/data/ISTD_Dataset/train
-#  ddpm_dataroot: /home/xinrui/projects/ShadowDiffusion/data/sam_ISTD/train
+#  ddpm_dataroot: /home/xinrui/projects/ShadowDiffusion_orig/data/sam_ISTD/train
 
 
 ckpt_path:

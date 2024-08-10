@@ -1,2 +1,5 @@
-python finetune_sam_with_bbox.py version=lora_mseloss_10_tvloss_version_4 tv_loss_beta=10  && \
-python finetune_sam_with_bbox.py version=lora_mseloss_1_tvloss_version_3 tv_loss_beta=1
+python soft_mask_diffusion.py \
+ && \
+python soft_mask_diffusion.py \
+ version=image_lora_sam_mse_1tvloss_1e-1contGradloss_3e-5_version_9_2_noResidualMask \
+ train.optimizer.lr=3e-5

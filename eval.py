@@ -6,7 +6,7 @@ import glob
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('-p', '--path', type=str,
-                        default='/home/xinrui/projects/ShadowDiffusion/experiments_lightning/train_sam_head/train_sam_head_version_removal_loss/result/epoch_99_3')
+                        default='/home/xinrui/projects/ShadowDiffusion_orig/experiments_lightning/train_sam_head/train_sam_head_version_removal_loss/result/epoch_99_3')
     args = parser.parse_args()
     a = args.path
     real_names = list(glob.glob('{}/*_hr.png'.format(args.path)))
