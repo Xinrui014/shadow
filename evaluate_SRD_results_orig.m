@@ -7,12 +7,12 @@ maskdir = 'C:\projects\ShadowDiffusion\dataset\ISTD_adjusted_C\test\test_B\';
 MD = dir([maskdir '\*.png']);
 
 % result directory|结果路径
-shadowdir = 'C:\projects\HomoFormer\log\sam_mask_ISTD+\metrics_before_process\';  %test_A
+shadowdir = 'C:\projects\HomoFormer\log\ostu_mask_ISTD+\metrics_before_process\';  %test_A
 SD = dir([shadowdir '\*_sr.png']);
 
     
 % ground truth directory|GT路径
-freedir ='C:\projects\HomoFormer\log\sam_mask_ISTD+\metrics_before_process\'; %AISTD
+freedir =shadowdir; %AISTD
 FD = dir([freedir '\*_hr.png']);
 
 total_dists = 0;

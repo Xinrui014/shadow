@@ -306,8 +306,8 @@ class SamShadow(L.LightningModule):
         self.diffusion.set_new_noise_schedule(args['model']['beta_schedule']['train'])
 
         # load ShadowDiffusion and LoraSAM finetuned model
-        if path is not None:
-            self.load_pretrained_models(path)
+        # if path is not None:
+        #     self.load_pretrained_models(path)
 
         self.model_restoration = transformer.Uformer()
 
@@ -495,20 +495,13 @@ class SamShadow(L.LightningModule):
         self.diffusion.eval()
         shadow_removal_sr, diffusion_mask_pred, sam_pred_soft_mask = self.sample(test_data)
         test_normalize = False
+
         if test_normalize:
-            hr = test_data['HR']
-            shadow_removal_sr = shadow_removal_sr.to(test_data['HR'].device)
-            # shadow_removal_sr = (shadow_removal_sr + 1) / 2.
-            hr_mean = torch.mean(hr, dim=(2, 3), keepdim=True)
-            hr_std = torch.std(hr, dim=(2, 3), keepdim=True)
-            sr_mean = torch.mean(shadow_removal_sr, dim=(2, 3), keepdim=True)
-            sr_std = torch.std(shadow_removal_sr, dim=(2, 3), keepdim=True)
-            shadow_removal_sr_normalized = (shadow_removal_sr - sr_mean) / (sr_std + 1e-6)
-            shadow_removal_sr_adjusted = (shadow_removal_sr_normalized * hr_std) + hr_mean
-            # shadow_removal_sr_adjusted = torch.clamp(shadow_removal_sr_adjusted, -1, 1)
-            res = Metrics.tensor2img(shadow_removal_sr_adjusted)
-            hr_img = Metrics.tensor2img(hr)
-            shadow_removal_sr_ = shadow_removal_sr_adjusted
+            hr_img = Metrics.tensor2img(test_data['HR'])
+            res = Metrics.tensor2img(shadow_removal_sr)
+            avg_channel = np.mean(res, axis=(0, 1))
+            avg_channel_gt = np.mean(hr_img, axis=(0, 1))
+            res = res * avg_channel_gt / avg_channel
         else:
             res = Metrics.tensor2img(shadow_removal_sr)
             hr_img = Metrics.tensor2img(test_data['HR'])
@@ -517,14 +510,13 @@ class SamShadow(L.LightningModule):
             # hr_img = cv2.resize(hr_img, [256, 256], interpolation=cv2.INTER_AREA)
             # res = cv2.cvtColor(res.astype(np.float32), cv2.COLOR_RGB2GRAY)
             # hr_img = cv2.cvtColor(hr_img.astype(np.float32), cv2.COLOR_RGB2GRAY)
-            shadow_removal_sr_ = shadow_removal_sr
 
 
         eval_psnr = Metrics.calculate_psnr(res, hr_img)
         eval_ssim = Metrics.calculate_ssim(res, hr_img)
         filename = test_data['filename']
 
-        return eval_psnr, eval_ssim, filename, sam_pred_soft_mask, shadow_removal_sr_, diffusion_mask_pred, test_data['HR']
+        return eval_psnr, eval_ssim, filename, sam_pred_soft_mask, res, diffusion_mask_pred, test_data['HR']
 
 
     def load_pretrained_models(self, path):
@@ -590,6 +582,7 @@ def train(args: DictConfig) -> None:
     model.load_pretrained_models(ckpt_path)
 
     # load training parameters
+
     save_model_name = args.name
     max_epochs = args.train.max_epochs
     save_every_n_epochs = args.train.every_n_epochs
@@ -609,7 +602,7 @@ def train(args: DictConfig) -> None:
     )
     trainer = L.Trainer(
         accelerator='gpu',
-        precision=16,
+        precision=32,
         devices=args.train.gpu_ids,
         max_epochs=max_epochs,
         # gradient_clip_val=0.5,
@@ -635,13 +628,13 @@ def sample(args: DictConfig) -> None:
     ckpt_path = args.ckpt_path
     model = SamShadow(SAM, networks.define_G, args, ckpt_path)
     # load restoration model
-    path_chk_rest_student = '/home/xinrui/projects/ShadowDiffusion/ShadowDiffusion_2/pretrained/ISTD_Plus/degradation_model.pth'
-    utils.load_checkpoint(model.model_restoration, path_chk_rest_student)
+    # path_chk_rest_student = '/home/xinrui/projects/ShadowDiffusion/ShadowDiffusion_2/pretrained/ISTD_Plus/degradation_model.pth'
+    # utils.load_checkpoint(model.model_restoration, path_chk_rest_student)
 
     # load checkpoints
-    checkpoint_sam = torch.load(args.samshadow_ckpt_path, map_location=lambda storage, loc: storage)
-    model.load_state_dict(checkpoint_sam['state_dict'], strict=False)
-    # model.load_pretrained_models(ckpt_path)
+    # checkpoint_sam = torch.load(args.samshadow_ckpt_path, map_location=lambda storage, loc: storage)
+    # model.load_state_dict(checkpoint_sam['state_dict'], strict=False)
+    model.load_pretrained_models(ckpt_path)
     predictor = L.Trainer(
         accelerator='gpu',
         devices=args.test.gpu_ids,
@@ -657,7 +650,7 @@ def sample(args: DictConfig) -> None:
     if not os.path.exists(save_path):
         os.mkdir(save_path)
     for i in range(len(predictions)):
-        eval_psnr, eval_ssim, filename, sam_pred_soft_mask, shadow_removal_sr, diffusion_mask_pred, gt_image = predictions[i]
+        eval_psnr, eval_ssim, filename, sam_pred_soft_mask, res, diffusion_mask_pred, gt_image = predictions[i]
         filename = filename[0]
         PSNR_SSIM_list_with_name.append((f'{filename}_PSNR', eval_psnr))
         PSNR_SSIM_list_with_name.append((f'{filename}_SSIM', eval_ssim))
@@ -665,7 +658,7 @@ def sample(args: DictConfig) -> None:
         SSIM.append(eval_ssim)
         # Save SR image
         sr_path = os.path.join(save_path, f'{filename}_sr.png')
-        res = Metrics.tensor2img(shadow_removal_sr)
+        res = res.astype(np.uint8)
         sr_img = Image.fromarray(res)
         sr_img.save(sr_path)
         # Save HR image

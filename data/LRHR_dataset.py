@@ -354,8 +354,8 @@ class TuneSAM(Dataset):
             elif '_shad.jpg' in self.sr_path[index]:
                 hr_name = self.sr_path[index].replace('shad.jpg', 'noshad.jpg')
             else:
-                hr_name = self.sr_path[index]
-                # hr_name = self.sr_path[index].replace('.jpg', '_free.jpg')
+                # hr_name = self.sr_path[index]
+                hr_name = self.sr_path[index].replace('.jpg', '_free.jpg')
 
 
         hr_name = hr_name.replace('_A', '_C')

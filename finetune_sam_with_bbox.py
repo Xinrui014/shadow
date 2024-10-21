@@ -492,8 +492,9 @@ def sample(args: DictConfig) -> None:
     logger = TensorBoardLogger(save_dir=f"./experiments_lightning/{args.name}", name="sample")
     data_module = SamDataModule(args)
     data_module.setup("test")
-    model = SAMFinetune.load_from_checkpoint(args.samshadow_ckpt_path)
-    # model = SAMFinetune(args, args.ckpt_path)
+    # model = SAMFinetune.load_from_checkpoint(args.samshadow_ckpt_path)
+    model = SAMFinetune(args, args.ckpt_path)
+
     predictor = L.Trainer(
         accelerator='gpu',
         devices=args.test.gpu_ids,

@@ -413,12 +413,12 @@ class SamShadow(L.LightningModule):
             path_chk_rest_student = '/home/xinrui/projects/ShadowDiffusion/ShadowDiffusion_2/pretrained/ISTD_Plus/degradation_model.pth'
             utils.load_checkpoint(self.model_restoration, path_chk_rest_student)
 
-            # gen_path = '{}_gen.pth'.format(path.ddpm)
-            # self.diffusion.load_state_dict(torch.load(gen_path), strict=False)
+            gen_path = '{}_gen.pth'.format(path.ddpm)
+            self.diffusion.load_state_dict(torch.load(gen_path), strict=False)
 
-            gen_path = self.args.samshadow_ckpt_path
-            checkpoint = torch.load(gen_path, map_location=lambda storage, loc: storage)
-            self.load_state_dict(checkpoint['state_dict'], strict=False)
+            # gen_path = self.args.samshadow_ckpt_path
+            # checkpoint = torch.load(gen_path, map_location=lambda storage, loc: storage)
+            # self.load_state_dict(checkpoint['state_dict'], strict=False)
 
         # load tuned SAM
         # sam_state_dict = torch.load(path.lora_sam, map_location=self.device)
@@ -524,7 +524,7 @@ def sample(args: DictConfig) -> None:
     model.load_pretrained_models(ckpt_path)
 
     predictor = L.Trainer(
-        accelerator='gpu',
+        accelerator="gpu",
         devices=args.test.gpu_ids,
         max_epochs=-1,
         benchmark=True,
